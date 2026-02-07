@@ -7,6 +7,7 @@ from fastapi.staticfiles import StaticFiles
 from app.api.auth import router as auth_router
 from app.api.designs import router as designs_router
 from app.api.health import router as health_router
+from app.api.marketplace import router as marketplace_router
 from app.api.rooms import router as rooms_router
 from app.api.solana import router as solana_router
 from app.config import get_settings
@@ -31,4 +32,5 @@ app.include_router(health_router)
 app.include_router(solana_router)
 app.include_router(auth_router)
 app.include_router(designs_router)
+app.include_router(marketplace_router)
 app.include_router(rooms_router)

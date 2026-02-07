@@ -11,6 +11,8 @@ class Settings(BaseSettings):
     frontend_origin: str = "http://localhost:5173"
     solana_cluster: str = "devnet"
     solana_rpc_url: str = "https://api.devnet.solana.com"
+    marketplace_authority_secret: str = ""
+    marketplace_listing_lock_ttl_seconds: int = 180
 
 
 @lru_cache

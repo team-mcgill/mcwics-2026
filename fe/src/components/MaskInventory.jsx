@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useWallet, useConnection } from '@solana/wallet-adapter-react';
 import { fetchWalletDesignInventory, FALLBACK_IMAGE } from '../lib/solana/inventory';
+import { fetchMarketplaceListings } from '../lib/api/marketplace';
 
 const INVENTORY_CACHE_PREFIX = 'mask-inventory:';
 const JOB_PRUNE_DELAY_MS = 5000;
@@ -17,7 +18,21 @@ function cloneDesignList(list) {
   return list.map((item) => ({ ...item }));
 }
 
-export function MaskInventory({ painterRef, onDesignLoad, onMintDesign, onUpdateDesign, onDeleteDesign }) {
+function formatSol(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return '0';
+  return numeric.toFixed(3).replace(/\.?0+$/, '');
+}
+
+export function MaskInventory({
+  painterRef,
+  onDesignLoad,
+  onMintDesign,
+  onUpdateDesign,
+  onDeleteDesign,
+  onSellDesign,
+  onCancelListing,
+}) {
   const [designs, setDesigns] = useState([]);
   const [loadedDesignId, setLoadedDesignId] = useState(null);
   const [backgroundJobs, setBackgroundJobs] = useState([]);
@@ -26,11 +41,16 @@ export function MaskInventory({ painterRef, onDesignLoad, onMintDesign, onUpdate
   const [deletingDesign, setDeletingDesign] = useState(null);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [showSaveModal, setShowSaveModal] = useState(false);
+  const [showSellModal, setShowSellModal] = useState(false);
+  const [sellingDesign, setSellingDesign] = useState(null);
+  const [sellPrice, setSellPrice] = useState('0.1');
   const [designName, setDesignName] = useState('');
   const [saveMode, setSaveMode] = useState('create');
   const [isLoadingInventory, setIsLoadingInventory] = useState(false);
   const [isSyncingInventory, setIsSyncingInventory] = useState(false);
   const [inventoryError, setInventoryError] = useState('');
+  const [marketListingsByMint, setMarketListingsByMint] = useState({});
+  const [isSyncingListings, setIsSyncingListings] = useState(false);
 
   const { publicKey } = useWallet();
   const { connection } = useConnection();
@@ -85,6 +105,41 @@ export function MaskInventory({ painterRef, onDesignLoad, onMintDesign, onUpdate
     }
   }, [inventoryCacheKey]);
 
+  const refreshOwnedListings = useCallback(async ({ silent = false } = {}) => {
+    if (!walletAddress) {
+      setMarketListingsByMint({});
+      setIsSyncingListings(false);
+      return;
+    }
+
+    if (silent) {
+      setIsSyncingListings(true);
+    }
+
+    try {
+      const response = await fetchMarketplaceListings();
+      const items = Array.isArray(response?.items) ? response.items : [];
+      const mine = items.filter((item) => item?.sellerWallet === walletAddress);
+      const byMint = {};
+
+      for (const listing of mine) {
+        if (typeof listing?.mintAddress === 'string' && listing.mintAddress) {
+          byMint[listing.mintAddress] = listing;
+        }
+      }
+
+      setMarketListingsByMint(byMint);
+    } catch (error) {
+      if (!silent) {
+        setBannerError(toErrorMessage(error, 'Failed to load marketplace listings.'));
+      }
+    } finally {
+      if (silent) {
+        setIsSyncingListings(false);
+      }
+    }
+  }, [walletAddress]);
+
   const refreshInventory = useCallback(async ({ silent = false } = {}) => {
     if (!publicKey) {
       setDesigns([]);
@@ -128,6 +183,7 @@ export function MaskInventory({ painterRef, onDesignLoad, onMintDesign, onUpdate
       setInventoryError('');
       setIsLoadingInventory(false);
       setIsSyncingInventory(false);
+      setMarketListingsByMint({});
       return;
     }
 
@@ -136,12 +192,13 @@ export function MaskInventory({ painterRef, onDesignLoad, onMintDesign, onUpdate
       setDesigns(cached);
       setIsLoadingInventory(false);
       void refreshInventory({ silent: true });
-      return;
+    } else {
+      setDesigns([]);
+      void refreshInventory();
     }
 
-    setDesigns([]);
-    void refreshInventory();
-  }, [publicKey, readCachedInventory, refreshInventory]);
+    void refreshOwnedListings({ silent: true });
+  }, [publicKey, readCachedInventory, refreshInventory, refreshOwnedListings]);
 
   useEffect(() => {
     if (loadedDesignId && !loadedDesign) {
@@ -293,7 +350,10 @@ export function MaskInventory({ painterRef, onDesignLoad, onMintDesign, onUpdate
           });
         }
 
-        await refreshInventory({ silent: true });
+        await Promise.all([
+          refreshInventory({ silent: true }),
+          refreshOwnedListings({ silent: true }),
+        ]);
 
         upsertJob(jobId, {
           status: 'done',
@@ -327,6 +387,13 @@ export function MaskInventory({ painterRef, onDesignLoad, onMintDesign, onUpdate
 
   const handleDeleteClick = (design) => {
     if (design.pending) return;
+
+    const listing = marketListingsByMint[design.mintAddress];
+    if (listing) {
+      setBannerError('Unlist this item before deleting it from your collection.');
+      return;
+    }
+
     setDeletingDesign(design);
     setShowDeleteModal(true);
   };
@@ -381,7 +448,10 @@ export function MaskInventory({ painterRef, onDesignLoad, onMintDesign, onUpdate
           });
         }
 
-        await refreshInventory({ silent: true });
+        await Promise.all([
+          refreshInventory({ silent: true }),
+          refreshOwnedListings({ silent: true }),
+        ]);
 
         let cleanupError = deleted?.cleanupError ?? '';
         if (!cleanupError && deleted?.cleanupPromise && typeof deleted.cleanupPromise.then === 'function') {
@@ -404,6 +474,138 @@ export function MaskInventory({ painterRef, onDesignLoad, onMintDesign, onUpdate
         upsertJob(jobId, {
           status: 'failed',
           message: 'Delete failed. Changes were reverted.',
+        });
+        pruneJobLater(jobId);
+      }
+    })();
+  };
+
+  const handleSellClick = (design) => {
+    if (!design || design.pending) return;
+    setSellingDesign(design);
+    setSellPrice('0.1');
+    setShowSellModal(true);
+  };
+
+  const confirmSell = () => {
+    if (!sellingDesign) return;
+    if (!publicKey) {
+      alert('Please connect your wallet first');
+      return;
+    }
+
+    if (typeof onSellDesign !== 'function') {
+      alert('Sell handler is not connected.');
+      return;
+    }
+
+    const listingPrice = Number(sellPrice);
+    if (!Number.isFinite(listingPrice) || listingPrice <= 0) {
+      alert('Please enter a valid SOL price.');
+      return;
+    }
+
+    if (!sellingDesign.metadataUri) {
+      alert('This item cannot be listed because metadata URI is missing.');
+      return;
+    }
+
+    const design = { ...sellingDesign };
+    const previousListings = { ...marketListingsByMint };
+
+    setShowSellModal(false);
+    setSellingDesign(null);
+    setBannerError('');
+
+    setMarketListingsByMint((prev) => ({
+      ...prev,
+      [design.mintAddress]: {
+        id: `pending-${design.mintAddress}`,
+        mintAddress: design.mintAddress,
+        priceSol: listingPrice,
+        pending: true,
+      },
+    }));
+
+    const jobId = addJob('sell', 'Listing item in marketplace background...');
+
+    void (async () => {
+      try {
+        const listed = await onSellDesign({
+          mintAddress: design.mintAddress,
+          metadataUri: design.metadataUri,
+          name: design.name,
+          imageData: design.imageData,
+          priceSol: listingPrice,
+        });
+
+        if (listed?.signature) {
+          setLastMintSignature(listed.signature);
+        }
+
+        upsertJob(jobId, {
+          status: 'submitted',
+          message: listed?.signature
+            ? 'Sell approval confirmed. Syncing listing...'
+            : 'Listing submitted. Syncing...',
+        });
+
+        await refreshOwnedListings({ silent: true });
+
+        upsertJob(jobId, {
+          status: 'done',
+          message: 'Item listed for sale.',
+        });
+        pruneJobLater(jobId);
+      } catch (error) {
+        setMarketListingsByMint(previousListings);
+        setBannerError(toErrorMessage(error, 'Failed to list item for sale.'));
+
+        upsertJob(jobId, {
+          status: 'failed',
+          message: 'Sell failed. Listing changes were reverted.',
+        });
+        pruneJobLater(jobId);
+      }
+    })();
+  };
+
+  const handleUnlist = (design) => {
+    const listing = marketListingsByMint[design.mintAddress];
+    if (!listing || listing.pending) return;
+    if (typeof onCancelListing !== 'function') {
+      setBannerError('Cancel listing handler is not connected.');
+      return;
+    }
+
+    const previousListings = { ...marketListingsByMint };
+    setBannerError('');
+
+    setMarketListingsByMint((prev) => {
+      const next = { ...prev };
+      delete next[design.mintAddress];
+      return next;
+    });
+
+    const jobId = addJob('unlist', 'Removing listing in background...');
+
+    void (async () => {
+      try {
+        await onCancelListing({ listingId: listing.id });
+        await refreshOwnedListings({ silent: true });
+
+        upsertJob(jobId, {
+          status: 'done',
+          message: 'Listing removed.',
+        });
+        pruneJobLater(jobId);
+      } catch (error) {
+        setMarketListingsByMint(previousListings);
+        setBannerError(toErrorMessage(error, 'Failed to remove listing.'));
+
+        upsertJob(jobId, {
+          status: 'failed',
+          message: 'Unlist failed. Changes were reverted.',
         });
         pruneJobLater(jobId);
       }
@@ -508,6 +710,12 @@ export function MaskInventory({ painterRef, onDesignLoad, onMintDesign, onUpdate
         </div>
       ) : null}
 
+      {(isSyncingInventory || isSyncingListings) ? (
+        <div className="mb-3 rounded-lg inner-glow bg-[#111] px-3 py-2">
+          <p className="text-[10px] uppercase tracking-wider text-[#8b7355]">Syncing inventory/marketplace in background...</p>
+        </div>
+      ) : null}
+
       <div className="flex-1 overflow-y-auto -mx-2 px-2">
         {!publicKey ? (
           <div className="flex flex-col items-center justify-center h-64 text-center">
@@ -541,17 +749,13 @@ export function MaskInventory({ painterRef, onDesignLoad, onMintDesign, onUpdate
             <p className="text-[#555] text-xs font-light">Mint a design to make it appear here</p>
           </div>
         ) : (
-          <>
-            {isSyncingInventory ? (
-              <p className="mb-3 text-[10px] uppercase tracking-wider text-[#8b7355]">Syncing inventory in background...</p>
-            ) : null}
+          <div className="grid grid-cols-2 gap-3">
+            {designs.map((design) => {
+              const listing = design.mintAddress ? marketListingsByMint[design.mintAddress] : null;
+              const isListed = Boolean(listing);
+              const isListingPending = Boolean(listing?.pending);
 
-            {inventoryError ? (
-              <p className="mb-3 text-[10px] text-red-300">{inventoryError}</p>
-            ) : null}
-
-            <div className="grid grid-cols-2 gap-3">
-              {designs.map((design) => (
+              return (
                 <div
                   key={design.id}
                   className={`group bg-[#111] inner-glow rounded-xl overflow-hidden transition-all duration-300 ${loadedDesignId === design.id ? 'ring-1 ring-[#d4af37]/50' : 'hover:border-[#d4af37]/20'}`}
@@ -572,6 +776,14 @@ export function MaskInventory({ painterRef, onDesignLoad, onMintDesign, onUpdate
                       </div>
                     ) : null}
 
+                    {isListed ? (
+                      <div className="absolute top-2 left-2 rounded-full bg-emerald-500/85 px-2 py-0.5">
+                        <p className="text-[9px] uppercase tracking-wider text-black">
+                          {isListingPending ? 'Listing...' : `Listed ${formatSol(listing.priceSol)} SOL`}
+                        </p>
+                      </div>
+                    ) : null}
+
                     {design.minted ? (
                       <div className="absolute top-2 right-2 w-5 h-5 rounded-full bg-[#d4af37] flex items-center justify-center">
                         <svg className="w-3 h-3 text-black" fill="currentColor" viewBox="0 0 20 20">
@@ -585,19 +797,37 @@ export function MaskInventory({ painterRef, onDesignLoad, onMintDesign, onUpdate
                     <h3 className="text-white text-xs font-medium truncate mb-1">{design.name}</h3>
                     <p className="text-[#555] text-[10px] font-light mb-3">{formatDate(design.createdAt)}</p>
 
-                    <div className="flex gap-2">
+                    <div className="grid grid-cols-2 gap-2">
                       <button
                         onClick={() => handleLoadDesign(design)}
                         disabled={design.pending}
-                        className="flex-1 px-2 py-1.5 text-[10px] font-light tracking-wider uppercase bg-[#1a1a1a] hover:bg-[#252525] text-[#a0a0a0] hover:text-white rounded transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                        className="px-2 py-1.5 text-[10px] font-light tracking-wider uppercase bg-[#1a1a1a] hover:bg-[#252525] text-[#a0a0a0] hover:text-white rounded transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                       >
                         Load
                       </button>
 
+                      {isListed ? (
+                        <button
+                          onClick={() => handleUnlist(design)}
+                          disabled={isListingPending}
+                          className="px-2 py-1.5 text-[10px] font-light tracking-wider uppercase bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-200 border border-emerald-500/30 rounded transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                        >
+                          Unlist
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => handleSellClick(design)}
+                          disabled={design.pending || !design.mintAddress}
+                          className="px-2 py-1.5 text-[10px] font-light tracking-wider uppercase bg-[#d4af37]/10 hover:bg-[#d4af37]/20 text-[#d4af37] border border-[#d4af37]/30 rounded transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                        >
+                          Sell
+                        </button>
+                      )}
+
                       <button
                         onClick={() => handleDeleteClick(design)}
-                        disabled={design.pending}
-                        className="flex-1 px-2 py-1.5 text-[10px] font-light tracking-wider uppercase bg-red-500/10 hover:bg-red-500/20 text-red-300 border border-red-500/30 rounded transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                        disabled={design.pending || isListed}
+                        className="px-2 py-1.5 text-[10px] font-light tracking-wider uppercase bg-red-500/10 hover:bg-red-500/20 text-red-300 border border-red-500/30 rounded transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                       >
                         Delete
                       </button>
@@ -607,7 +837,7 @@ export function MaskInventory({ painterRef, onDesignLoad, onMintDesign, onUpdate
                           href={`https://explorer.solana.com/address/${design.mintAddress}?cluster=devnet`}
                           target="_blank"
                           rel="noreferrer"
-                          className="px-2 py-1.5 text-[10px] font-light tracking-wider uppercase bg-transparent hover:bg-[#d4af37]/10 text-[#555] hover:text-[#d4af37] border border-[#333] hover:border-[#d4af37]/30 rounded transition-colors"
+                          className="px-2 py-1.5 text-center text-[10px] font-light tracking-wider uppercase bg-transparent hover:bg-[#d4af37]/10 text-[#555] hover:text-[#d4af37] border border-[#333] hover:border-[#d4af37]/30 rounded transition-colors"
                         >
                           View
                         </a>
@@ -615,9 +845,9 @@ export function MaskInventory({ painterRef, onDesignLoad, onMintDesign, onUpdate
                     </div>
                   </div>
                 </div>
-              ))}
-            </div>
-          </>
+              );
+            })}
+          </div>
         )}
       </div>
 
@@ -656,6 +886,48 @@ export function MaskInventory({ painterRef, onDesignLoad, onMintDesign, onUpdate
                 className="flex-1 px-4 py-2.5 btn-convex text-[#0a0a0a] text-sm font-light rounded-lg transition-all duration-300 disabled:opacity-50 hover:-translate-y-0.5"
               >
                 {saveMode === 'overwrite' ? 'Start Update' : 'Start Save'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {showSellModal && sellingDesign ? (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-[#111] inner-glow rounded-2xl p-6 max-w-sm w-full">
+            <h3 className="text-white font-serif font-light text-lg mb-2 tracking-wide">List for Sale</h3>
+            <p className="text-[#718096] text-sm font-light mb-4">
+              Enter a SOL price for <span className="text-[#d4af37]">{sellingDesign.name}</span>.
+            </p>
+
+            <input
+              type="number"
+              min="0"
+              step="0.001"
+              value={sellPrice}
+              onChange={(e) => setSellPrice(e.target.value)}
+              placeholder="0.1"
+              className="w-full bg-[#0a0a0a] border border-white/10 rounded-lg px-4 py-3 text-white text-sm placeholder-[#555] focus:outline-none focus:border-[#d4af37]/30 mb-4"
+              autoFocus
+              onKeyDown={(e) => e.key === 'Enter' && confirmSell()}
+            />
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => {
+                  setShowSellModal(false);
+                  setSellingDesign(null);
+                }}
+                className="flex-1 px-4 py-2.5 text-sm font-light text-[#a0a0a0] hover:text-white transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmSell}
+                disabled={!sellPrice.trim()}
+                className="flex-1 px-4 py-2.5 btn-convex text-[#0a0a0a] text-sm font-light rounded-lg transition-all duration-300 disabled:opacity-50 hover:-translate-y-0.5"
+              >
+                List Item
               </button>
             </div>
           </div>

@@ -7,12 +7,19 @@ import {
   updateDesignMetadataWithWalletAuth,
   uploadDesignMetadataWithWalletAuth,
 } from '../lib/api/designUpload'
+import {
+  cancelMarketplaceListingWithWalletAuth,
+  createMarketplaceListingWithWalletAuth,
+  fetchMarketplaceConfig,
+} from '../lib/api/marketplace'
 import { burnMaskDesign } from '../lib/solana/burnDesign'
+import { approveDesignForMarketplace } from '../lib/solana/marketplace'
 import { mintMaskDesign } from '../lib/solana/mintDesign'
 
 function Character() {
   const painterRef = useRef(null)
   const hasPersistedEquipRef = useRef(false)
+  const marketplaceConfigRef = useRef(null)
   const [activeDesign, setActiveDesign] = useState(null)
   const { connection } = useConnection()
   const { publicKey, sendTransaction, signMessage } = useWallet()
@@ -80,6 +87,70 @@ function Character() {
     }
   }, [connection, publicKey, sendTransaction, signMessage])
 
+  const getMarketplaceAuthority = useCallback(async () => {
+    if (marketplaceConfigRef.current?.authorityPubkey) {
+      return marketplaceConfigRef.current.authorityPubkey
+    }
+
+    const config = await fetchMarketplaceConfig()
+    if (!config?.authorityPubkey) {
+      throw new Error('Marketplace authority is unavailable.')
+    }
+
+    marketplaceConfigRef.current = config
+    return config.authorityPubkey
+  }, [])
+
+  const handleSellDesign = useCallback(async ({ mintAddress, metadataUri, name, imageData, priceSol }) => {
+    if (!mintAddress) {
+      throw new Error('Design mint address is missing.')
+    }
+
+    if (!metadataUri) {
+      throw new Error('Design metadata URI is missing.')
+    }
+
+    const authorityPubkey = await getMarketplaceAuthority()
+
+    const approved = await approveDesignForMarketplace({
+      mintAddress,
+      marketplaceAuthority: authorityPubkey,
+      connection,
+      publicKey,
+      sendTransaction,
+    })
+
+    await approved.waitForConfirmation()
+
+    const listing = await createMarketplaceListingWithWalletAuth({
+      publicKey,
+      signMessage,
+      mintAddress,
+      metadataUri,
+      name,
+      imageData,
+      category: 'Masks',
+      priceSol,
+    })
+
+    return {
+      signature: approved.signature,
+      listing,
+    }
+  }, [connection, getMarketplaceAuthority, publicKey, sendTransaction, signMessage])
+
+  const handleCancelListing = useCallback(async ({ listingId }) => {
+    if (!listingId) {
+      throw new Error('Listing id is missing.')
+    }
+
+    return cancelMarketplaceListingWithWalletAuth({
+      publicKey,
+      signMessage,
+      listingId,
+    })
+  }, [publicKey, signMessage])
+
   useEffect(() => {
     if (!activeDesign) {
       if (hasPersistedEquipRef.current) {
@@ -130,6 +201,8 @@ function Character() {
                 onMintDesign={handleMintDesign}
                 onUpdateDesign={handleUpdateDesign}
                 onDeleteDesign={handleDeleteDesign}
+                onSellDesign={handleSellDesign}
+                onCancelListing={handleCancelListing}
               />
             </div>
           </div>
