@@ -1,6 +1,9 @@
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { ROOMS, TOPICS } from '../lib/rooms/rooms'
+import { fetchRoomsPresence } from '../lib/api/roomsPresence'
+
+const PRESENCE_REFRESH_INTERVAL_MS = 5000
 
 function RoomCard({ room }) {
   const occupancyPercent = (room.players / room.maxPlayers) * 100
@@ -71,10 +74,70 @@ function TopicCard({ topic, isSelected }) {
 
 function Home() {
   const [selectedTopic, setSelectedTopic] = useState(null)
+  const [roomPresence, setRoomPresence] = useState(() => {
+    const initial = {}
+    ROOMS.forEach((room) => {
+      initial[String(room.id)] = Math.max(0, Number(room.players) || 0)
+    })
+    return initial
+  })
+
+  useEffect(() => {
+    let disposed = false
+
+    const refreshPresence = async () => {
+      try {
+        const payload = await fetchRoomsPresence()
+        if (disposed) return
+
+        const nextPresence = {}
+        ROOMS.forEach((room) => {
+          nextPresence[String(room.id)] = Math.max(0, Number(payload.rooms?.[String(room.id)] ?? 0))
+        })
+
+        setRoomPresence(nextPresence)
+      } catch {}
+    }
+
+    void refreshPresence()
+    const timerId = window.setInterval(() => {
+      void refreshPresence()
+    }, PRESENCE_REFRESH_INTERVAL_MS)
+
+    return () => {
+      disposed = true
+      window.clearInterval(timerId)
+    }
+  }, [])
+
+  const roomsWithPresence = useMemo(
+    () => ROOMS.map((room) => ({
+      ...room,
+      players: Math.max(0, Number(roomPresence[String(room.id)] ?? 0)),
+    })),
+    [roomPresence]
+  )
+
+  const totalPlayersOnline = useMemo(
+    () => roomsWithPresence.reduce((sum, room) => sum + room.players, 0),
+    [roomsWithPresence]
+  )
+
+  const topicsWithPresence = useMemo(() => {
+    const countsByTopic = {}
+    roomsWithPresence.forEach((room) => {
+      countsByTopic[room.topic] = (countsByTopic[room.topic] ?? 0) + room.players
+    })
+
+    return TOPICS.map((topic) => ({
+      ...topic,
+      count: countsByTopic[topic.name] ?? 0,
+    }))
+  }, [roomsWithPresence])
 
   const filteredRooms = selectedTopic
-    ? ROOMS.filter(room => room.topic === selectedTopic)
-    : ROOMS
+    ? roomsWithPresence.filter(room => room.topic === selectedTopic)
+    : roomsWithPresence
 
   return (
     <div className="min-h-screen bg-[#0a0a0a]">
@@ -90,7 +153,7 @@ function Home() {
           <div className="text-center max-w-2xl mx-auto">
             <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-[#111] mb-8 inner-glow">
               <span className="w-1.5 h-1.5 rounded-full bg-[#d4af37] animate-pulse" />
-              <span className="text-xs font-light text-[#8b7355] tracking-widest uppercase">1,247 masks online</span>
+              <span className="text-xs font-light text-[#8b7355] tracking-widest uppercase">{totalPlayersOnline} players online</span>
             </div>
 
             <h1 className="text-5xl md:text-6xl font-serif font-light text-white mb-4 tracking-wider">
@@ -138,7 +201,7 @@ function Home() {
         </div>
 
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 mb-16">
-          {TOPICS.map((topic) => (
+          {topicsWithPresence.map((topic) => (
             <div
               key={topic.name}
               onClick={() => setSelectedTopic(topic.name === selectedTopic ? null : topic.name)}

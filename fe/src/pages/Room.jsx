@@ -771,7 +771,7 @@ function Room() {
             )}
           </div>
 
-          <form onSubmit={handleSubmitChat}>
+          <form onSubmit={handleSubmitChat} className="flex items-center gap-3">
             <input
               ref={chatInputRef}
               type="text"
@@ -779,8 +779,15 @@ function Room() {
               onChange={(event) => setChatInput(event.target.value)}
               placeholder="Type a message and press Enter"
               maxLength={240}
-              className="w-full rounded-lg bg-[#0c0c0c] border border-white/10 px-4 py-2.5 text-sm text-white/90 placeholder:text-[#555] focus:outline-none focus:border-[#d4af37]/40"
+              className="flex-1 rounded-lg bg-[#0c0c0c] border border-white/10 px-4 py-2.5 text-sm text-white/90 placeholder:text-[#555] focus:outline-none focus:border-[#d4af37]/40"
             />
+            <button
+              type="button"
+              onClick={() => setIsChangingMask(true)}
+              className="px-4 py-2.5 rounded-lg border border-[#d4af37]/30 text-[#d4af37] text-[11px] tracking-widest uppercase hover:bg-[#d4af37]/10 whitespace-nowrap"
+            >
+              Change Mask
+            </button>
           </form>
 
           {connectionError && (

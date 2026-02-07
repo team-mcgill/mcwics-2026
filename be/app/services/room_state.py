@@ -134,5 +134,12 @@ class RoomStateManager:
                 return []
             return [entry.websocket for entry in room.values()]
 
+    async def get_room_player_counts(self) -> dict[str, int]:
+        async with self._lock:
+            return {
+                room_id: len(participants)
+                for room_id, participants in self._rooms.items()
+            }
+
 
 room_state_manager = RoomStateManager()

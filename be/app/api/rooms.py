@@ -106,6 +106,15 @@ async def _broadcast_json(websockets: list[WebSocket], payload: dict[str, object
         await _send_json_safe(websocket, payload)
 
 
+@router.get("/api/rooms/presence")
+async def get_rooms_presence() -> dict[str, object]:
+    room_counts = await room_state_manager.get_room_player_counts()
+    return {
+        "rooms": room_counts,
+        "totalPlayers": sum(room_counts.values()),
+    }
+
+
 @router.websocket("/ws/rooms/{room_id}")
 async def room_socket(websocket: WebSocket, room_id: str) -> None:
     await websocket.accept()
