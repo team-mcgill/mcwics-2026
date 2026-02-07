@@ -1,0 +1,11 @@
+[project]
+name = "masquerade-be"
+version = "0.1.0"
+description = "Masquerade backend"
+requires-python = ">=3.10"
+dependencies = [
+  "fastapi>=0.116.0",
+  "uvicorn[standard]>=0.35.0",
+  "pydantic-settings>=2.10.1",
+  "solana>=0.36.9",
+]

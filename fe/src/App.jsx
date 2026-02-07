@@ -1,4 +1,5 @@
 import { BrowserRouter, Routes, Route, Link, useLocation } from 'react-router-dom'
+import { WalletMultiButton } from '@solana/wallet-adapter-react-ui'
 import Home from './pages/Home'
 import About from './pages/About'
 import Character from './pages/Character'
@@ -16,25 +17,26 @@ function Navigation() {
           <Link to="/" className="text-xl font-bold text-white">
             MyApp
           </Link>
-          <div className="flex gap-6">
-            <Link 
-              to="/" 
+          <div className="flex items-center gap-6">
+            <Link
+              to="/"
               className={`transition-colors ${isActive('/') ? 'text-blue-400' : 'text-slate-300 hover:text-white'}`}
             >
               Home
             </Link>
-            <Link 
-              to="/about" 
+            <Link
+              to="/about"
               className={`transition-colors ${isActive('/about') ? 'text-blue-400' : 'text-slate-300 hover:text-white'}`}
             >
               About
             </Link>
-            <Link 
-              to="/character" 
+            <Link
+              to="/character"
               className={`transition-colors ${isActive('/character') ? 'text-blue-400' : 'text-slate-300 hover:text-white'}`}
             >
               Character
             </Link>
+            <WalletMultiButton className="!h-10 !rounded-lg !bg-blue-500 hover:!bg-blue-600 !text-sm !font-medium" />
           </div>
         </div>
       </div>
