@@ -75,6 +75,7 @@ function Room() {
 
   const socketRef = useRef(null)
   const moveSentAtRef = useRef(0)
+  const chatInputRef = useRef(null)
 
   const handleSocketMessage = useCallback((payload) => {
     if (!payload || typeof payload !== 'object') return
@@ -189,11 +190,13 @@ function Room() {
       onMessage: handleSocketMessage,
       onOpen: () => {
         setConnectionStatus('connected')
+        setConnectionError('')
       },
       onClose: () => {
         setConnectionStatus('disconnected')
       },
       onError: () => {
+        if (socket.isOpen()) return
         setConnectionStatus('error')
         setConnectionError('Failed to connect to room socket.')
       },
@@ -259,6 +262,7 @@ function Room() {
 
     socketRef.current?.sendChat(trimmed)
     setChatInput('')
+    chatInputRef.current?.blur()
   }, [chatInput])
 
   if (!room) {
@@ -285,7 +289,7 @@ function Room() {
           <div>
             <h1 className="text-xl md:text-2xl font-serif font-light text-white tracking-wide">{room.name}</h1>
             <p className="text-xs md:text-sm font-light text-[#718096] tracking-wide mt-1">
-              WASD to move · Enter to chat · {displayName}
+              WASD to move · Click + drag to look · Enter to chat · {displayName}
             </p>
           </div>
 
@@ -318,6 +322,7 @@ function Room() {
 
           <form onSubmit={handleSubmitChat}>
             <input
+              ref={chatInputRef}
               type="text"
               value={chatInput}
               onChange={(event) => setChatInput(event.target.value)}

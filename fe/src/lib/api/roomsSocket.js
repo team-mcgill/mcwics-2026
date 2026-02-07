@@ -23,10 +23,14 @@ export function createRoomSocket({ roomId, onMessage, onOpen, onClose, onError }
 
   const connect = () => new Promise((resolve, reject) => {
     socket = new WebSocket(url)
+    let settled = false
 
     socket.onopen = () => {
       onOpen?.()
-      resolve()
+      if (!settled) {
+        settled = true
+        resolve()
+      }
     }
 
     socket.onmessage = (event) => {
@@ -40,7 +44,10 @@ export function createRoomSocket({ roomId, onMessage, onOpen, onClose, onError }
 
     socket.onerror = (event) => {
       onError?.(event)
-      reject(new Error('WebSocket connection failed.'))
+      if (!settled && socket.readyState !== WebSocket.OPEN) {
+        settled = true
+        reject(new Error('WebSocket connection failed.'))
+      }
     }
 
     socket.onclose = () => {

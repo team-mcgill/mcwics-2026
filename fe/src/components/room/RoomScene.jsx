@@ -3,6 +3,26 @@ import * as THREE from 'three'
 
 const ROOM_HALF_SIZE = 22
 const MOVE_SPEED = 6
+const MOVE_ACCELERATION = 18
+const MOVE_DECELERATION = 14
+const TURN_SMOOTHING = 14
+const CAMERA_FOLLOW_STIFFNESS = 8
+const CAMERA_DISTANCE = 6.6
+const CAMERA_LOOK_DISTANCE = 7.0
+const CAMERA_PIVOT_HEIGHT = 1.45
+const CAMERA_PITCH_MIN = -1.2
+const CAMERA_PITCH_MAX = -0.02
+const MOUSE_LOOK_SENSITIVITY = 0.006
+const MOVEMENT_CODE_TO_DIRECTION = {
+  KeyW: 'forward',
+  KeyA: 'left',
+  KeyS: 'backward',
+  KeyD: 'right',
+  ArrowUp: 'forward',
+  ArrowLeft: 'left',
+  ArrowDown: 'backward',
+  ArrowRight: 'right',
+}
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value))
@@ -233,11 +253,25 @@ export function RoomScene({ playersById, localPlayerId, onLocalMove }) {
     })
 
     const avatars = new Map()
+    const localMotion = {
+      velocity: new THREE.Vector2(0, 0),
+    }
+    const lookState = {
+      yaw: 0,
+      pitch: -0.24,
+      dragging: false,
+      pointerId: null,
+      lastX: 0,
+      lastY: 0,
+    }
+    const cameraLookAt = new THREE.Vector3(0, CAMERA_PIVOT_HEIGHT, CAMERA_LOOK_DISTANCE)
+    const worldForward = new THREE.Vector3(0, 0, 1)
+    const worldRight = new THREE.Vector3(1, 0, 0)
     const keyState = {
-      KeyW: false,
-      KeyA: false,
-      KeyS: false,
-      KeyD: false,
+      forward: false,
+      left: false,
+      backward: false,
+      right: false,
     }
 
     const addAvatar = (player) => {
@@ -370,24 +404,38 @@ export function RoomScene({ playersById, localPlayerId, onLocalMove }) {
       if (!localId) return
 
       const avatar = avatars.get(localId)
-      const players = playersRef.current ?? {}
-      const localState = players[localId]
-      if (!avatar || !localState) return
+      if (!avatar) return
 
-      let moveX = 0
-      let moveZ = 0
+      worldForward.set(Math.sin(lookState.yaw), 0, Math.cos(lookState.yaw)).normalize()
+      worldRight.set(-Math.cos(lookState.yaw), 0, Math.sin(lookState.yaw)).normalize()
 
-      if (keyState.KeyW) moveZ -= 1
-      if (keyState.KeyS) moveZ += 1
-      if (keyState.KeyA) moveX -= 1
-      if (keyState.KeyD) moveX += 1
+      const inputStrafe = (keyState.right ? 1 : 0) - (keyState.left ? 1 : 0)
+      const inputForward = (keyState.forward ? 1 : 0) - (keyState.backward ? 1 : 0)
+      const inputLength = Math.hypot(inputStrafe, inputForward)
+      const hasInput = inputLength > 0
 
-      const moving = moveX !== 0 || moveZ !== 0
-      if (moving) {
-        const length = Math.hypot(moveX, moveZ) || 1
-        const velocityX = (moveX / length) * MOVE_SPEED
-        const velocityZ = (moveZ / length) * MOVE_SPEED
+      const targetVelocity = new THREE.Vector2(0, 0)
+      if (hasInput) {
+        const normalizedStrafe = inputStrafe / inputLength
+        const normalizedForward = inputForward / inputLength
 
+        const moveWorldX = (worldRight.x * normalizedStrafe) + (worldForward.x * normalizedForward)
+        const moveWorldZ = (worldRight.z * normalizedStrafe) + (worldForward.z * normalizedForward)
+        targetVelocity.set(moveWorldX * MOVE_SPEED, moveWorldZ * MOVE_SPEED)
+      }
+
+      const velocityBlend = 1 - Math.exp(-(hasInput ? MOVE_ACCELERATION : MOVE_DECELERATION) * deltaSeconds)
+      localMotion.velocity.lerp(targetVelocity, velocityBlend)
+
+      if (!hasInput && localMotion.velocity.lengthSq() < 0.0004) {
+        localMotion.velocity.set(0, 0)
+      }
+
+      const velocityX = localMotion.velocity.x
+      const velocityZ = localMotion.velocity.y
+      const velocityLengthSq = localMotion.velocity.lengthSq()
+
+      if (velocityLengthSq > 0) {
         avatar.group.position.x = clamp(
           avatar.group.position.x + velocityX * deltaSeconds,
           -ROOM_HALF_SIZE,
@@ -398,9 +446,15 @@ export function RoomScene({ playersById, localPlayerId, onLocalMove }) {
           -ROOM_HALF_SIZE,
           ROOM_HALF_SIZE
         )
+      }
 
-        avatar.group.rotation.y = Math.atan2(moveX, moveZ)
+      if (velocityLengthSq > 0.0012) {
+        const targetRotation = Math.atan2(velocityX, velocityZ)
+        const rotationBlend = 1 - Math.exp(-TURN_SMOOTHING * deltaSeconds)
+        avatar.group.rotation.y += shortestAngleDiff(avatar.group.rotation.y, targetRotation) * rotationBlend
+      }
 
+      if (velocityLengthSq > 0.00001) {
         onLocalMoveRef.current?.({
           position: {
             x: avatar.group.position.x,
@@ -409,14 +463,6 @@ export function RoomScene({ playersById, localPlayerId, onLocalMove }) {
           },
           rotationY: avatar.group.rotation.y,
         })
-      } else {
-        const targetX = localState.position?.x ?? 0
-        const targetY = localState.position?.y ?? 0
-        const targetZ = localState.position?.z ?? 0
-        const targetRotation = localState.rotationY ?? 0
-
-        avatar.group.position.lerp(new THREE.Vector3(targetX, targetY, targetZ), 0.35)
-        avatar.group.rotation.y += shortestAngleDiff(avatar.group.rotation.y, targetRotation) * 0.25
       }
     }
 
@@ -467,24 +513,36 @@ export function RoomScene({ playersById, localPlayerId, onLocalMove }) {
       })
     }
 
-    const updateCamera = () => {
+    const updateCamera = (deltaSeconds) => {
       const localId = localPlayerIdRef.current
       if (!localId) return
 
       const avatar = avatars.get(localId)
       if (!avatar) return
 
-      const yaw = avatar.group.rotation.y
-      const targetPosition = avatar.group.position.clone()
+      const targetPosition = avatar.group.position.clone().add(new THREE.Vector3(0, CAMERA_PIVOT_HEIGHT, 0))
+      const blend = 1 - Math.exp(-CAMERA_FOLLOW_STIFFNESS * deltaSeconds)
+
+      const forward = new THREE.Vector3(
+        Math.sin(lookState.yaw) * Math.cos(lookState.pitch),
+        Math.sin(lookState.pitch),
+        Math.cos(lookState.yaw) * Math.cos(lookState.pitch)
+      ).normalize()
 
       const desiredPosition = new THREE.Vector3(
-        targetPosition.x - Math.sin(yaw) * 4.5,
-        targetPosition.y + 2.5,
-        targetPosition.z - Math.cos(yaw) * 4.5
+        targetPosition.x - (forward.x * CAMERA_DISTANCE),
+        targetPosition.y - (forward.y * CAMERA_DISTANCE),
+        targetPosition.z - (forward.z * CAMERA_DISTANCE)
+      )
+      const desiredLookAt = new THREE.Vector3(
+        targetPosition.x + (forward.x * CAMERA_LOOK_DISTANCE),
+        targetPosition.y + (forward.y * CAMERA_LOOK_DISTANCE),
+        targetPosition.z + (forward.z * CAMERA_LOOK_DISTANCE)
       )
 
-      camera.position.lerp(desiredPosition, 0.12)
-      camera.lookAt(targetPosition.x, targetPosition.y + 1.55, targetPosition.z)
+      camera.position.lerp(desiredPosition, blend)
+      cameraLookAt.lerp(desiredLookAt, blend)
+      camera.lookAt(cameraLookAt)
     }
 
     const onResize = () => {
@@ -506,20 +564,93 @@ export function RoomScene({ playersById, localPlayerId, onLocalMove }) {
       )
       if (isTyping) return
 
-      if (event.code in keyState) {
-        keyState[event.code] = true
+      const direction = MOVEMENT_CODE_TO_DIRECTION[event.code]
+      if (direction) {
+        keyState[direction] = true
+        if (event.code.startsWith('Arrow')) {
+          event.preventDefault()
+        }
       }
     }
 
     const onKeyUp = (event) => {
-      if (event.code in keyState) {
-        keyState[event.code] = false
+      const direction = MOVEMENT_CODE_TO_DIRECTION[event.code]
+      if (direction) {
+        keyState[direction] = false
+      }
+    }
+
+    const canvas = renderer.domElement
+    canvas.style.cursor = 'grab'
+
+    const stopDragging = () => {
+      lookState.dragging = false
+      lookState.pointerId = null
+      canvas.style.cursor = 'grab'
+    }
+
+    const onPointerDown = (event) => {
+      if (event.button !== 0) return
+
+      lookState.dragging = true
+      lookState.pointerId = event.pointerId
+      lookState.lastX = event.clientX
+      lookState.lastY = event.clientY
+      canvas.style.cursor = 'grabbing'
+
+      if (typeof canvas.setPointerCapture === 'function') {
+        canvas.setPointerCapture(event.pointerId)
+      }
+    }
+
+    const onPointerMove = (event) => {
+      if (!lookState.dragging || lookState.pointerId !== event.pointerId) return
+
+      const deltaX = event.clientX - lookState.lastX
+      const deltaY = event.clientY - lookState.lastY
+      lookState.lastX = event.clientX
+      lookState.lastY = event.clientY
+
+      lookState.yaw += deltaX * MOUSE_LOOK_SENSITIVITY
+      lookState.pitch = clamp(
+        lookState.pitch - (deltaY * MOUSE_LOOK_SENSITIVITY),
+        CAMERA_PITCH_MIN,
+        CAMERA_PITCH_MAX
+      )
+    }
+
+    const onPointerUp = (event) => {
+      if (lookState.pointerId !== event.pointerId) return
+      stopDragging()
+    }
+
+    const onPointerCancel = () => {
+      stopDragging()
+    }
+
+    const onWindowBlur = () => {
+      keyState.forward = false
+      keyState.left = false
+      keyState.backward = false
+      keyState.right = false
+      stopDragging()
+    }
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState !== 'visible') {
+        onWindowBlur()
       }
     }
 
     window.addEventListener('resize', onResize)
     window.addEventListener('keydown', onKeyDown)
     window.addEventListener('keyup', onKeyUp)
+    window.addEventListener('blur', onWindowBlur)
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    canvas.addEventListener('pointerdown', onPointerDown)
+    canvas.addEventListener('pointermove', onPointerMove)
+    canvas.addEventListener('pointerup', onPointerUp)
+    canvas.addEventListener('pointercancel', onPointerCancel)
     onResize()
 
     const clock = new THREE.Clock()
@@ -533,7 +664,7 @@ export function RoomScene({ playersById, localPlayerId, onLocalMove }) {
       updateLocalMovement(deltaSeconds)
       updateRemoteAvatars()
       updateChatBubbles()
-      updateCamera()
+      updateCamera(deltaSeconds)
 
       renderer.render(scene, camera)
     }
@@ -545,6 +676,12 @@ export function RoomScene({ playersById, localPlayerId, onLocalMove }) {
       window.removeEventListener('resize', onResize)
       window.removeEventListener('keydown', onKeyDown)
       window.removeEventListener('keyup', onKeyUp)
+      window.removeEventListener('blur', onWindowBlur)
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+      canvas.removeEventListener('pointerdown', onPointerDown)
+      canvas.removeEventListener('pointermove', onPointerMove)
+      canvas.removeEventListener('pointerup', onPointerUp)
+      canvas.removeEventListener('pointercancel', onPointerCancel)
 
       avatars.forEach((_, playerId) => removeAvatar(playerId))
       renderer.dispose()
