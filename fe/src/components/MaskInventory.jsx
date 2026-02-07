@@ -1,34 +1,42 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useWallet, useConnection } from '@solana/wallet-adapter-react';
-import { Transaction, SystemProgram, PublicKey } from '@solana/web3.js';
+import { fetchWalletDesignInventory, FALLBACK_IMAGE } from '../lib/solana/inventory';
 
-const STORAGE_KEY = 'masquerade_designs';
-
-export function MaskInventory({ painterRef, onDesignLoad }) {
+export function MaskInventory({ painterRef, onDesignLoad, onMintDesign }) {
   const [designs, setDesigns] = useState([]);
   const [isSaving, setIsSaving] = useState(false);
   const [mintingId, setMintingId] = useState(null);
   const [showSaveModal, setShowSaveModal] = useState(false);
   const [designName, setDesignName] = useState('');
-  const { publicKey, signTransaction } = useWallet();
+  const [isLoadingInventory, setIsLoadingInventory] = useState(false);
+  const [inventoryError, setInventoryError] = useState('');
+  const { publicKey } = useWallet();
   const { connection } = useConnection();
 
-  // Load designs from localStorage on mount
-  useEffect(() => {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (stored) {
-      try {
-        setDesigns(JSON.parse(stored));
-      } catch (e) {
-        console.error('Failed to parse designs:', e);
-      }
+  const refreshInventory = useCallback(async () => {
+    if (!publicKey) {
+      setDesigns([]);
+      setInventoryError('');
+      return;
     }
-  }, []);
 
-  // Save designs to localStorage whenever they change
+    setIsLoadingInventory(true);
+    setInventoryError('');
+
+    try {
+      const onChainDesigns = await fetchWalletDesignInventory(connection, publicKey);
+      setDesigns(onChainDesigns);
+    } catch (error) {
+      setInventoryError(error instanceof Error ? error.message : 'Failed to load inventory from devnet.');
+      setDesigns([]);
+    } finally {
+      setIsLoadingInventory(false);
+    }
+  }, [connection, publicKey]);
+
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(designs));
-  }, [designs]);
+    refreshInventory();
+  }, [refreshInventory]);
 
   const handleSaveClick = () => {
     if (!painterRef.current) return;
@@ -38,23 +46,29 @@ export function MaskInventory({ painterRef, onDesignLoad }) {
 
   const confirmSave = async () => {
     if (!painterRef.current || !designName.trim()) return;
+    if (!publicKey) {
+      alert('Please connect your wallet first');
+      return;
+    }
     
     setIsSaving(true);
     try {
       const imageData = painterRef.current.exportDesign();
-      const newDesign = {
-        id: Date.now().toString(),
+
+      if (typeof onMintDesign !== 'function') {
+        throw new Error('Minting handler is not connected. Wire your mint flow into MaskInventory via onMintDesign.');
+      }
+
+      await onMintDesign({
         name: designName.trim(),
         imageData,
-        createdAt: new Date().toISOString(),
-        minted: false,
-        mintAddress: null,
-      };
-      setDesigns(prev => [newDesign, ...prev]);
+      });
+
       setShowSaveModal(false);
+      await refreshInventory();
     } catch (err) {
       console.error('Failed to save design:', err);
-      alert('Failed to save design. Please try again.');
+      alert(err instanceof Error ? err.message : 'Failed to save design.');
     } finally {
       setIsSaving(false);
     }
@@ -67,52 +81,32 @@ export function MaskInventory({ painterRef, onDesignLoad }) {
     }
   };
 
-  const handleDeleteDesign = (id) => {
-    if (confirm('Are you sure you want to delete this design?')) {
-      setDesigns(prev => prev.filter(d => d.id !== id));
-    }
-  };
-
   const handleMintDesign = async (design) => {
-    if (!publicKey) {
-      alert('Please connect your wallet first');
+    if (!publicKey || !painterRef.current) return;
+    if (typeof onMintDesign !== 'function') {
+      alert('Mint handler is not connected.');
       return;
     }
 
     setMintingId(design.id);
     try {
-      // For now, we'll create a simple transaction as a placeholder
-      // In a real implementation, you'd use Metaplex to create an NFT
-      const transaction = new Transaction().add(
-        SystemProgram.transfer({
-          fromPubkey: publicKey,
-          toPubkey: publicKey, // Self-transfer as placeholder
-          lamports: 0,
-        })
-      );
-
-      // This is a simplified mock - real NFT minting would require Metaplex
-      // and proper metadata upload to Arweave/IPFS
-      await new Promise(resolve => setTimeout(resolve, 2000)); // Simulate minting
-      
-      // Update design as minted
-      setDesigns(prev => prev.map(d => 
-        d.id === design.id 
-          ? { ...d, minted: true, mintAddress: publicKey.toString() }
-          : d
-      ));
-      
-      alert(`Design "${design.name}" would be minted to devnet!\n\nNote: Full NFT minting requires Metaplex integration with metadata upload.`);
+      await onMintDesign({
+        name: design.name,
+        imageData: design.imageData,
+        replaceMintAddress: design.mintAddress,
+      });
+      await refreshInventory();
     } catch (err) {
-      console.error('Minting failed:', err);
-      alert('Minting failed: ' + err.message);
+      alert(err instanceof Error ? err.message : 'Minting failed.');
     } finally {
       setMintingId(null);
     }
   };
 
   const formatDate = (isoString) => {
+    if (!isoString) return 'Unknown date';
     const date = new Date(isoString);
+    if (Number.isNaN(date.getTime())) return 'Unknown date';
     return date.toLocaleDateString('en-US', { 
       month: 'short', 
       day: 'numeric',
@@ -128,12 +122,12 @@ export function MaskInventory({ painterRef, onDesignLoad }) {
         <div>
           <h2 className="text-lg font-serif text-white tracking-wider">Your Collection</h2>
           <p className="text-xs text-[#718096] font-light">
-            {designs.length} design{designs.length !== 1 ? 's' : ''} saved
+            {publicKey ? `${designs.length} design${designs.length !== 1 ? 's' : ''} on devnet` : 'Connect wallet to load devnet inventory'}
           </p>
         </div>
         <button
           onClick={handleSaveClick}
-          disabled={isSaving || !painterRef.current}
+          disabled={isSaving || !painterRef.current || !publicKey}
           className="px-4 py-2 bg-[#d4af37] text-black text-xs font-medium tracking-wider uppercase rounded-lg hover:bg-[#c4a030] transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
         >
           {isSaving ? (
@@ -157,15 +151,36 @@ export function MaskInventory({ painterRef, onDesignLoad }) {
 
       {/* Designs Grid */}
       <div className="flex-1 overflow-y-auto -mx-2 px-2">
-        {designs.length === 0 ? (
+        {!publicKey ? (
+          <div className="flex flex-col items-center justify-center h-64 text-center">
+            <p className="text-[#718096] text-sm font-light mb-2">Wallet not connected</p>
+            <p className="text-[#555] text-xs font-light">Connect wallet to load your devnet designs</p>
+          </div>
+        ) : isLoadingInventory ? (
+          <div className="flex flex-col items-center justify-center h-64 text-center">
+            <div className="animate-spin h-6 w-6 border-2 border-[#d4af37] border-t-transparent rounded-full mb-3" />
+            <p className="text-[#718096] text-sm font-light">Loading devnet inventory...</p>
+          </div>
+        ) : inventoryError ? (
+          <div className="flex flex-col items-center justify-center h-64 text-center">
+            <p className="text-red-400 text-sm font-light mb-2">Failed to load inventory</p>
+            <p className="text-[#666] text-xs font-light mb-4">{inventoryError}</p>
+            <button
+              onClick={refreshInventory}
+              className="px-3 py-2 text-xs tracking-wider uppercase border border-[#d4af37]/30 text-[#d4af37] rounded-lg hover:bg-[#d4af37]/10"
+            >
+              Retry
+            </button>
+          </div>
+        ) : designs.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-64 text-center">
             <div className="w-16 h-16 rounded-full bg-[#1a1a1a] border border-[#333] flex items-center justify-center mb-4">
               <svg className="w-8 h-8 text-[#555]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
               </svg>
             </div>
-            <p className="text-[#718096] text-sm font-light mb-2">No designs yet</p>
-            <p className="text-[#555] text-xs font-light">Create and save your first mask design</p>
+            <p className="text-[#718096] text-sm font-light mb-2">No devnet designs yet</p>
+            <p className="text-[#555] text-xs font-light">Mint a design to make it appear here after reload</p>
           </div>
         ) : (
           <div className="grid grid-cols-2 gap-3">
@@ -179,6 +194,9 @@ export function MaskInventory({ painterRef, onDesignLoad }) {
                   <img
                     src={design.imageData}
                     alt={design.name}
+                    onError={(event) => {
+                      event.currentTarget.src = FALLBACK_IMAGE;
+                    }}
                     className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity"
                   />
                   {design.minted && (
@@ -206,7 +224,7 @@ export function MaskInventory({ painterRef, onDesignLoad }) {
                     {!design.minted ? (
                       <button
                         onClick={() => handleMintDesign(design)}
-                        disabled={mintingId === design.id || !publicKey}
+                        disabled={mintingId === design.id || !publicKey || isLoadingInventory}
                         className="flex-1 px-2 py-1.5 text-[10px] font-light tracking-wider uppercase bg-[#d4af37]/10 hover:bg-[#d4af37]/20 text-[#d4af37] border border-[#d4af37]/30 rounded transition-colors disabled:opacity-50"
                       >
                         {mintingId === design.id ? '...' : 'Mint'}
@@ -219,14 +237,14 @@ export function MaskInventory({ painterRef, onDesignLoad }) {
                         Minted
                       </button>
                     )}
-                    <button
-                      onClick={() => handleDeleteDesign(design.id)}
-                      className="px-2 py-1.5 text-[10px] font-light tracking-wider uppercase bg-transparent hover:bg-red-500/10 text-[#555] hover:text-red-400 border border-[#333] hover:border-red-500/30 rounded transition-colors"
+                    <a
+                      href={`https://explorer.solana.com/address/${design.mintAddress}?cluster=devnet`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="px-2 py-1.5 text-[10px] font-light tracking-wider uppercase bg-transparent hover:bg-[#d4af37]/10 text-[#555] hover:text-[#d4af37] border border-[#333] hover:border-[#d4af37]/30 rounded transition-colors"
                     >
-                      <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                      </svg>
-                    </button>
+                      View
+                    </a>
                   </div>
                 </div>
               </div>

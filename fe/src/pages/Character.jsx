@@ -1,10 +1,25 @@
-import { useRef, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
+import { useConnection, useWallet } from '@solana/wallet-adapter-react'
 import { FaceMeshPainter } from '../components/FaceMeshPainter'
 import { MaskInventory } from '../components/MaskInventory'
+import { mintMaskDesign } from '../lib/solana/mintDesign'
 
 function Character() {
   const painterRef = useRef(null)
   const [activeDesign, setActiveDesign] = useState(null)
+  const { connection } = useConnection()
+  const { publicKey, sendTransaction } = useWallet()
+
+  const handleMintDesign = useCallback(async ({ name, imageData, replaceMintAddress }) => {
+    return mintMaskDesign({
+      name,
+      imageData,
+      replaceMintAddress,
+      connection,
+      publicKey,
+      sendTransaction,
+    })
+  }, [connection, publicKey, sendTransaction])
 
   return (
     <div className="min-h-screen bg-[#0a0a0a] pt-28 pb-8">
@@ -34,6 +49,7 @@ function Character() {
               <MaskInventory 
                 painterRef={painterRef}
                 onDesignLoad={setActiveDesign}
+                onMintDesign={handleMintDesign}
               />
             </div>
           </div>
