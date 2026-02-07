@@ -19,42 +19,44 @@ function MasqueradeLogo() {
   )
 }
 
+function NavLink({ to, children, isActive }) {
+  return (
+    <Link
+      to={to}
+      className={`relative font-light tracking-widest text-sm uppercase transition-colors duration-300 ${
+        isActive ? 'text-[#d4af37]' : 'text-[#718096] hover:text-[#a0a0a0]'
+      }`}
+    >
+      {children}
+      <span
+        className={`absolute -bottom-1 left-0 h-px bg-[#d4af37] transition-all duration-300 ${
+          isActive ? 'w-full' : 'w-0 group-hover:w-full'
+        }`}
+      />
+    </Link>
+  )
+}
+
 function Navigation() {
   const location = useLocation()
-
   const isActive = (path) => location.pathname === path
 
   return (
-    <nav className="fixed top-0 left-0 right-0 z-50 bg-[#0a0a0a]/90 backdrop-blur-md border-b border-white/5">
+    <nav className="fixed top-0 left-0 right-0 z-50 bg-[#0a0a0a]/80 backdrop-blur-sm">
       <div className="max-w-7xl mx-auto px-6">
         <div className="flex items-center justify-between h-20">
           <Link to="/" className="flex items-center group">
             <MasqueradeLogo />
-            <span className="text-xl font-serif font-semibold text-white tracking-wide group-hover:text-[#d4af37] transition-colors">
+            <span className="text-lg font-serif font-light text-white tracking-[0.2em] group-hover:text-[#d4af37] transition-elegant">
               MASQUERADE
             </span>
           </Link>
-          <div className="flex items-center gap-8">
-            <Link
-              to="/"
-              className={`font-medium tracking-wide transition-colors ${isActive('/') ? 'text-[#d4af37]' : 'text-[#a0a0a0] hover:text-white'}`}
-            >
-              Rooms
-            </Link>
-            <Link
-              to="/store"
-              className={`font-medium tracking-wide transition-colors ${isActive('/store') ? 'text-[#d4af37]' : 'text-[#a0a0a0] hover:text-white'}`}
-            >
-              Store
-            </Link>
-            <Link
-              to="/character"
-              className={`font-medium tracking-wide transition-colors ${isActive('/character') ? 'text-[#d4af37]' : 'text-[#a0a0a0] hover:text-white'}`}
-            >
-              Character
-            </Link>
-            <div className="ml-4">
-              <WalletMultiButton className="!h-10 !px-4 !rounded-lg !text-sm !font-medium !bg-gradient-to-r !from-[#d4af37] !to-[#8b7355] !text-[#0a0a0a] hover:!from-[#e8c547] hover:!to-[#a08060] !transition-all" />
+          <div className="flex items-center gap-10">
+            <NavLink to="/" isActive={isActive('/')}>Rooms</NavLink>
+            <NavLink to="/store" isActive={isActive('/store')}>Store</NavLink>
+            <NavLink to="/character" isActive={isActive('/character')}>Character</NavLink>
+            <div className="ml-2">
+              <WalletMultiButton className="!h-9 !px-4 !rounded-lg !text-xs !font-light !tracking-wider !uppercase" />
             </div>
           </div>
         </div>

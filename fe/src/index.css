@@ -48,15 +48,43 @@ body {
   background: #d4af37;
 }
 
-/* Wallet adapter dark theme override */
+/* Smooth transitions utility */
+.transition-elegant {
+  transition: all 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Inner glow effect */
+.inner-glow {
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.05);
+}
+
+/* Elevated card shadow */
+.elevated {
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+}
+
+/* Subtle lift on hover */
+.hover-lift {
+  transition: transform 0.3s ease, box-shadow 0.3s ease;
+}
+
+.hover-lift:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 30px 60px -12px rgba(0, 0, 0, 0.6);
+}
+
+/* Wallet adapter minimal style */
 .wallet-adapter-button {
-  background: linear-gradient(135deg, #d4af37 0%, #8b7355 100%) !important;
-  color: #0a0a0a !important;
+  background: transparent !important;
+  color: #d4af37 !important;
   font-family: "Inter", sans-serif !important;
   font-weight: 500 !important;
   border-radius: 8px !important;
+  border: 1px solid rgba(212, 175, 55, 0.3) !important;
+  transition: all 0.3s ease !important;
 }
 
 .wallet-adapter-button:hover {
-  background: linear-gradient(135deg, #e8c547 0%, #a08060 100%) !important;
+  background: rgba(212, 175, 55, 0.1) !important;
+  border-color: rgba(212, 175, 55, 0.6) !important;
 }
