@@ -1,7 +1,10 @@
 import { useEffect, useRef } from 'react'
 import * as THREE from 'three'
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 
 const ROOM_HALF_SIZE = 22
+const ROOM_SCENE_MODEL_URL = '/models/futuristic_plaza.glb'
+const ROOM_SCENE_TARGET_SPAN = ROOM_HALF_SIZE * 2.25
 const MOVE_SPEED = 6
 const MOVE_ACCELERATION = 18
 const MOVE_DECELERATION = 14
@@ -246,6 +249,78 @@ function disposeObject3D(object3D) {
   })
 }
 
+function createLegacyRoomShell() {
+  const root = new THREE.Group()
+
+  const floor = new THREE.Mesh(
+    new THREE.PlaneGeometry(80, 80),
+    new THREE.MeshStandardMaterial({ color: '#101010', roughness: 0.94, metalness: 0.05 })
+  )
+  floor.receiveShadow = true
+  floor.rotation.x = -Math.PI / 2
+  root.add(floor)
+
+  const grid = new THREE.GridHelper(80, 80, '#2a2a2a', '#1a1a1a')
+  grid.position.y = 0.01
+  root.add(grid)
+
+  const wallMaterial = new THREE.MeshStandardMaterial({ color: '#131313', roughness: 0.85, metalness: 0.1 })
+  const walls = [
+    new THREE.Mesh(new THREE.BoxGeometry(80, 10, 0.6), wallMaterial),
+    new THREE.Mesh(new THREE.BoxGeometry(80, 10, 0.6), wallMaterial),
+    new THREE.Mesh(new THREE.BoxGeometry(0.6, 10, 80), wallMaterial),
+    new THREE.Mesh(new THREE.BoxGeometry(0.6, 10, 80), wallMaterial),
+  ]
+  walls[0].position.set(0, 5, ROOM_HALF_SIZE + 2)
+  walls[1].position.set(0, 5, -ROOM_HALF_SIZE - 2)
+  walls[2].position.set(ROOM_HALF_SIZE + 2, 5, 0)
+  walls[3].position.set(-ROOM_HALF_SIZE - 2, 5, 0)
+  walls.forEach((wall) => {
+    wall.receiveShadow = true
+    wall.castShadow = false
+    root.add(wall)
+  })
+
+  return root
+}
+
+function fitRoomModelToScene(modelRoot) {
+  modelRoot.updateMatrixWorld(true)
+
+  const box = new THREE.Box3().setFromObject(modelRoot)
+  const size = new THREE.Vector3()
+  box.getSize(size)
+
+  const horizontalSpan = Math.max(size.x, size.z)
+  if (horizontalSpan > 0.001) {
+    const scale = ROOM_SCENE_TARGET_SPAN / horizontalSpan
+    modelRoot.scale.multiplyScalar(scale)
+    modelRoot.updateMatrixWorld(true)
+    box.setFromObject(modelRoot)
+  }
+
+  const centeredBox = new THREE.Box3().setFromObject(modelRoot)
+  const center = new THREE.Vector3()
+  centeredBox.getCenter(center)
+
+  modelRoot.position.x -= center.x
+  modelRoot.position.z -= center.z
+  modelRoot.position.y -= centeredBox.min.y
+
+  modelRoot.traverse((child) => {
+    if (!child.isMesh) return
+    child.castShadow = false
+    child.receiveShadow = true
+
+    const materials = Array.isArray(child.material) ? child.material : [child.material]
+    materials.forEach((material) => {
+      if (material && typeof material === 'object') {
+        material.needsUpdate = true
+      }
+    })
+  })
+}
+
 export function RoomScene({ playersById, localPlayerId, onLocalMove }) {
   const containerRef = useRef(null)
   const playersRef = useRef(playersById)
@@ -293,34 +368,27 @@ export function RoomScene({ playersById, localPlayerId, onLocalMove }) {
     directionalLight.shadow.camera.far = 60
     scene.add(directionalLight)
 
-    const floor = new THREE.Mesh(
-      new THREE.PlaneGeometry(80, 80),
-      new THREE.MeshStandardMaterial({ color: '#101010', roughness: 0.94, metalness: 0.05 })
+    const legacyRoomShell = createLegacyRoomShell()
+    scene.add(legacyRoomShell)
+
+    const gltfLoader = new GLTFLoader()
+    let roomModelRoot = null
+    let roomModelDisposed = false
+
+    gltfLoader.load(
+      ROOM_SCENE_MODEL_URL,
+      (gltf) => {
+        if (roomModelDisposed) return
+        roomModelRoot = gltf.scene
+        fitRoomModelToScene(roomModelRoot)
+        scene.add(roomModelRoot)
+        legacyRoomShell.visible = false
+      },
+      undefined,
+      () => {
+        legacyRoomShell.visible = true
+      }
     )
-    floor.receiveShadow = true
-    floor.rotation.x = -Math.PI / 2
-    scene.add(floor)
-
-    const grid = new THREE.GridHelper(80, 80, '#2a2a2a', '#1a1a1a')
-    grid.position.y = 0.01
-    scene.add(grid)
-
-    const wallMaterial = new THREE.MeshStandardMaterial({ color: '#131313', roughness: 0.85, metalness: 0.1 })
-    const walls = [
-      new THREE.Mesh(new THREE.BoxGeometry(80, 10, 0.6), wallMaterial),
-      new THREE.Mesh(new THREE.BoxGeometry(80, 10, 0.6), wallMaterial),
-      new THREE.Mesh(new THREE.BoxGeometry(0.6, 10, 80), wallMaterial),
-      new THREE.Mesh(new THREE.BoxGeometry(0.6, 10, 80), wallMaterial),
-    ]
-    walls[0].position.set(0, 5, ROOM_HALF_SIZE + 2)
-    walls[1].position.set(0, 5, -ROOM_HALF_SIZE - 2)
-    walls[2].position.set(ROOM_HALF_SIZE + 2, 5, 0)
-    walls[3].position.set(-ROOM_HALF_SIZE - 2, 5, 0)
-    walls.forEach((wall) => {
-      wall.receiveShadow = true
-      wall.castShadow = false
-      scene.add(wall)
-    })
 
     const avatars = new Map()
     const localMotion = {
@@ -739,6 +807,7 @@ export function RoomScene({ playersById, localPlayerId, onLocalMove }) {
 
     return () => {
       cancelAnimationFrame(frameId)
+      roomModelDisposed = true
       window.removeEventListener('resize', onResize)
       window.removeEventListener('keydown', onKeyDown)
       window.removeEventListener('keyup', onKeyUp)
@@ -750,6 +819,12 @@ export function RoomScene({ playersById, localPlayerId, onLocalMove }) {
       canvas.removeEventListener('pointercancel', onPointerCancel)
 
       avatars.forEach((_, playerId) => removeAvatar(playerId))
+      if (roomModelRoot) {
+        scene.remove(roomModelRoot)
+        disposeObject3D(roomModelRoot)
+      }
+      scene.remove(legacyRoomShell)
+      disposeObject3D(legacyRoomShell)
       renderer.dispose()
       scene.clear()
 

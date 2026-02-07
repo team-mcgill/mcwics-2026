@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useParams, useNavigate } from 'react-router-dom'
 import { useConnection, useWallet } from '@solana/wallet-adapter-react'
 import { RoomScene } from '../components/room/RoomScene'
 import { createRoomSocket } from '../lib/api/roomsSocket'
-import { getRoomById } from '../lib/rooms/rooms'
+import { getRoomById, ROOMS } from '../lib/rooms/rooms'
 import { FALLBACK_IMAGE, fetchWalletDesignInventory } from '../lib/solana/inventory'
 
 const EQUIPPED_MASK_STORAGE_KEY = 'masquerade:equipped-mask'
@@ -266,6 +266,114 @@ function upsertPlayer(existingState, player) {
   }
 }
 
+function StatusIndicator({ status }) {
+  const statusConfig = {
+    connected: { dot: 'bg-emerald-500', pulse: false, text: '', textColor: 'text-emerald-400' },
+    connecting: { dot: 'bg-amber-400', pulse: true, text: '...', textColor: 'text-amber-400' },
+    disconnected: { dot: 'bg-red-500', pulse: false, text: '', textColor: 'text-red-400' },
+    error: { dot: 'bg-red-500', pulse: false, text: '', textColor: 'text-red-400' },
+  }
+
+  const config = statusConfig[status] || statusConfig.connecting
+
+  return (
+    <div className="flex items-center gap-2 px-1.5 py-1.5 rounded-full bg-[#111]/80 border border-white/5">
+      <span className={`w-2 h-2 rounded-full ${config.dot} ${config.pulse ? 'animate-pulse' : ''}`} />
+      <span className={`text-[11px] font-light tracking-wide ${config.textColor}`}>{config.text}</span>
+    </div>
+  )
+}
+
+function RoomSelectorSidebar({ isOpen, onClose, currentRoomId }) {
+  const navigate = useNavigate()
+
+  return (
+    <>
+      {isOpen && (
+        <div
+          className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40 transition-opacity"
+          onClick={onClose}
+        />
+      )}
+      <div
+        className={`fixed top-0 left-0 h-full w-80 bg-[#0a0a0a]/95 backdrop-blur-xl border-r border-[#d4af37]/20 z-50 transform transition-transform duration-300 ease-out ${
+          isOpen ? 'translate-x-0' : '-translate-x-full'
+        }`}
+      >
+        <div className="flex flex-col h-full">
+          <div className="flex items-center justify-between px-6 py-5 border-b border-white/5">
+            <div className="flex items-center gap-3">
+                🗝️
+              <span className="font-serif text-white tracking-[0.1em]">Rooms</span>
+            </div>
+            <button
+              onClick={onClose}
+              className="p-2 text-[#718096] hover:text-[#d4af37] transition-colors"
+              aria-label="Close"
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                <path d="M6 6L18 18" strokeLinecap="round" />
+                <path d="M18 6L6 18" strokeLinecap="round" />
+              </svg>
+            </button>
+          </div>
+
+          <div className="flex-1 overflow-y-auto py-4">
+            {ROOMS.map((room) => {
+              const isCurrent = room.id === Number(currentRoomId)
+              return (
+                <button
+                  key={room.id}
+                  onClick={() => {
+                    if (!isCurrent) {
+                      navigate(`/rooms/${room.id}`)
+                    }
+                    onClose()
+                  }}
+                  className={`w-full text-left px-6 py-4 transition-all duration-200 group ${
+                    isCurrent
+                      ? 'bg-[#d4af37]/10 border-l-2 border-[#d4af37]'
+                      : 'hover:bg-white/5 border-l-2 border-transparent hover:border-[#d4af37]/50'
+                  }`}
+                >
+                  <div className="flex items-start gap-4">
+                    <span className="text-2xl">{room.image}</span>
+                    <div className="flex-1 min-w-0">
+                      <p className={`font-serif text-sm tracking-wide truncate ${isCurrent ? 'text-[#d4af37]' : 'text-white group-hover:text-[#f5f5dc]'}`}>
+                        {room.name}
+                      </p>
+                      <div className="flex items-center gap-3 mt-1">
+                        <span className="text-[11px] text-[#718096]">{room.topic}</span>
+                        <span className="w-1 h-1 rounded-full bg-[#718096]" />
+                        <span className="text-[11px] text-[#8b7355]">{room.players} online</span>
+                      </div>
+                    </div>
+                    {isCurrent && (
+                      <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                    )}
+                  </div>
+                </button>
+              )
+            })}
+          </div>
+
+          <div className="px-6 py-4 border-t border-white/5">
+            <Link
+              to="/"
+              className="flex items-center justify-center gap-2 w-full py-3 rounded-lg border border-white/10 text-[#a0a0a0] text-xs tracking-widest uppercase hover:border-[#d4af37]/30 hover:text-[#d4af37] transition-colors"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                <path d="M3 12L21 12M3 12L9 6M3 12L9 18" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+              Back to Lobby
+            </Link>
+          </div>
+        </div>
+      </div>
+    </>
+  )
+}
+
 function Room() {
   const { roomId } = useParams()
   const room = useMemo(() => getRoomById(roomId), [roomId])
@@ -287,6 +395,7 @@ function Room() {
   const [isLoadingMasks, setIsLoadingMasks] = useState(false)
   const [maskLoadError, setMaskLoadError] = useState('')
   const [maskEquipError, setMaskEquipError] = useState('')
+  const [isRoomSelectorOpen, setIsRoomSelectorOpen] = useState(false)
 
   const socketRef = useRef(null)
   const moveSentAtRef = useRef(0)
@@ -608,29 +717,40 @@ function Room() {
 
   return (
     <div className="min-h-screen bg-[#0a0a0a] pt-24 pb-4">
+      <RoomSelectorSidebar
+        isOpen={isRoomSelectorOpen}
+        onClose={() => setIsRoomSelectorOpen(false)}
+        currentRoomId={roomId}
+      />
+
       <div className="max-w-7xl mx-auto px-4 md:px-6 h-[calc(100vh-7.5rem)] flex flex-col">
-        <div className="flex items-center justify-between mb-3 px-1">
-          <div>
-            <h1 className="text-xl md:text-2xl font-serif font-light text-white tracking-wide">{room.name}</h1>
-            <p className="text-xs md:text-sm font-light text-[#718096] tracking-wide mt-1">
-              WASD to move · Click + drag to look · Enter to chat · {displayName}
-            </p>
+        <div className="flex items-center justify-between mb-4 px-1">
+          <div className="flex items-center gap-4">
+            <button
+              onClick={() => setIsRoomSelectorOpen(true)}
+              className="flex items-center justify-center w-10 h-10 rounded-xl bg-[#111] border border-white/10 text-[#d4af37] hover:border-[#d4af37]/50 hover:bg-[#d4af37]/5 transition-all"
+              aria-label="Change Room"
+            >
+            🗝️
+            </button>
+            <div>
+              <div className="flex items-center gap-3">
+                <h1 className="text-xl md:text-2xl font-serif font-light text-white tracking-wide">{room.name}</h1>
+                <span className="px-2 py-0.5 rounded-full bg-[#d4af37]/10 border border-[#d4af37]/30 text-[#d4af37] text-[10px] tracking-wider">
+                  {Object.keys(playersById).length} here
+                </span>
+              </div>
+              <p className="text-xs md:text-sm font-light text-[#718096] tracking-wide mt-1">
+                WASD to move · Click + drag to look · Enter to chat · {displayName}
+              </p>
+            </div>
           </div>
 
-          <div className="text-right flex flex-col items-end gap-2">
-            <button
-              type="button"
-              onClick={() => setIsChangingMask(true)}
-              className="px-3 py-1.5 rounded-lg border border-[#d4af37]/30 text-[#d4af37] text-[11px] tracking-widest uppercase hover:bg-[#d4af37]/10"
-            >
-              Change Room
-            </button>
-            <p className="text-[11px] font-light tracking-widest uppercase text-[#8b7355]">Status</p>
-            <p className="text-xs font-light text-white/70 -mt-1">{connectionStatus}</p>
-          </div>
+          <StatusIndicator status={connectionStatus} />
         </div>
 
-        <div className="flex-1 min-h-0 rounded-2xl overflow-hidden bg-[#111] inner-glow">
+        <div className="flex-1 min-h-0 rounded-2xl overflow-hidden bg-[#111] inner-glow relative">
+          <div className="absolute inset-0 bg-gradient-to-b from-[#0a0a0a]/20 via-transparent to-[#0a0a0a]/40 pointer-events-none z-10" />
           <RoomScene
             playersById={playersById}
             localPlayerId={localPlayerId}
