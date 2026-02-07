@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useImperativeHandle, forwardRef } from 'react';
 import * as THREE from 'three';
 import { FilesetResolver, FaceLandmarker } from '@mediapipe/tasks-vision';
 import { TRIANGULATION } from '../lib/faceMesh/triangulation';
@@ -10,12 +10,12 @@ const VIDEO_HEIGHT = 480;
 
 const DEFAULT_TEX_SIZE = 2048;
 
-export function FaceMeshPainter() {
+export const FaceMeshPainter = forwardRef(function FaceMeshPainter(props, ref) {
   const videoRef = useRef(null);
   const webglCanvasRef = useRef(null);
   const containerRef = useRef(null);
 
-  const [brushColor, setBrushColor] = useState('#ff0000');
+  const [brushColor, setBrushColor] = useState('#d4af37');
   const [brushSize, setBrushSize] = useState(5);
   const [showFaceMesh, setShowFaceMesh] = useState(true);
   const [error, setError] = useState(null);
@@ -405,12 +405,29 @@ export function FaceMeshPainter() {
     };
   }, [getUvFromPointerEvent, paintAtUv]);
 
-  const clearDrawing = () => {
+  const clearDrawing = useCallback(() => {
     const ctx = paintCtxRef.current;
     if (!ctx || !textureRef.current) return;
     ctx.clearRect(0, 0, paintCanvas.width, paintCanvas.height);
     textureRef.current.needsUpdate = true;
-  };
+  }, [paintCanvas.width, paintCanvas.height]);
+
+  // Expose methods to parent via ref
+  useImperativeHandle(ref, () => ({
+    exportDesign: () => paintCanvas.toDataURL('image/png'),
+    loadDesign: (dataUrl) => {
+      const ctx = paintCtxRef.current;
+      if (!ctx || !textureRef.current) return;
+      const img = new Image();
+      img.onload = () => {
+        ctx.clearRect(0, 0, paintCanvas.width, paintCanvas.height);
+        ctx.drawImage(img, 0, 0);
+        textureRef.current.needsUpdate = true;
+      };
+      img.src = dataUrl;
+    },
+    clearDrawing,
+  }), [paintCanvas, clearDrawing]);
 
   const handleLoadedMetadata = () => {
     const video = videoRef.current;
@@ -439,7 +456,7 @@ export function FaceMeshPainter() {
     <div className="flex flex-col items-center gap-4">
       <div
         ref={containerRef}
-        className="relative w-full overflow-hidden"
+        className="relative w-full overflow-hidden rounded-xl border border-[#d4af37]/20"
         style={{ maxWidth: VIDEO_WIDTH, aspectRatio, transform: 'scaleX(-1)' }}
       >
         <video
@@ -448,7 +465,7 @@ export function FaceMeshPainter() {
           playsInline
           muted
           onLoadedMetadata={handleLoadedMetadata}
-          className="absolute inset-0 h-full w-full rounded-lg shadow-lg"
+          className="absolute inset-0 h-full w-full"
           width={VIDEO_WIDTH}
           height={VIDEO_HEIGHT}
         />
@@ -457,12 +474,12 @@ export function FaceMeshPainter() {
           ref={webglCanvasRef}
           width={VIDEO_WIDTH}
           height={VIDEO_HEIGHT}
-          className="absolute inset-0 h-full w-full rounded-lg cursor-crosshair"
+          className="absolute inset-0 h-full w-full cursor-crosshair"
         />
 
         {!isLoaded && (
-          <div className="absolute inset-0 flex items-center justify-center bg-black/50 rounded-lg">
-            <div className="text-white">Loading face mesh…</div>
+          <div className="absolute inset-0 flex items-center justify-center bg-black/80">
+            <div className="text-[#d4af37] font-light tracking-wider">Loading face mesh…</div>
           </div>
         )}
       </div>
@@ -478,4 +495,4 @@ export function FaceMeshPainter() {
       />
     </div>
   );
-}
+});

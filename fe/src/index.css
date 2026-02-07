@@ -73,18 +73,38 @@ body {
   box-shadow: 0 30px 60px -12px rgba(0, 0, 0, 0.6);
 }
 
+/* Convex button - lighter top, darker bottom */
+.btn-convex {
+  background: linear-gradient(180deg, #e8c547 0%, #d4af37 50%, #c4a035 100%);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2);
+}
+
+.btn-convex:hover {
+  background: linear-gradient(180deg, #f0d050 0%, #e0b840 50%, #d0a838 100%);
+  transform: translateY(-1px);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+}
+
+.btn-convex-dark {
+  background: linear-gradient(180deg, #1a1a1a 0%, #111 50%, #0a0a0a 100%);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+.btn-convex-dark:hover {
+  background: linear-gradient(180deg, #222 0%, #1a1a1a 50%, #111 100%);
+}
+
 /* Wallet adapter minimal style */
 .wallet-adapter-button {
   background: transparent !important;
-  color: #d4af37 !important;
+  color: #718096 !important;
   font-family: "Inter", sans-serif !important;
-  font-weight: 500 !important;
-  border-radius: 8px !important;
-  border: 1px solid rgba(212, 175, 55, 0.3) !important;
+  font-weight: 300 !important;
+  border-radius: 4px !important;
+  border: none !important;
   transition: all 0.3s ease !important;
 }
 
 .wallet-adapter-button:hover {
-  background: rgba(212, 175, 55, 0.1) !important;
-  border-color: rgba(212, 175, 55, 0.6) !important;
+  color: #a0a0a0 !important;
 }

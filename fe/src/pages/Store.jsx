@@ -56,7 +56,7 @@ function StoreItem({ item }) {
             <span className="font-light text-white/80">{item.price}</span>
             <span className="text-xs font-light text-[#718096]">SOL</span>
           </div>
-          <button className="px-5 py-2 rounded-lg bg-[#d4af37] text-[#0a0a0a] text-xs font-light tracking-wider uppercase hover:bg-[#e8c547] hover:-translate-y-0.5 transition-all duration-300">
+          <button className="px-5 py-2 rounded-lg text-[#0a0a0a] text-xs font-light tracking-wider uppercase btn-convex transition-all duration-300">
             Buy
           </button>
         </div>
@@ -78,7 +78,7 @@ function Store() {
       <div className="relative overflow-hidden">
         <div className="absolute inset-0 bg-gradient-to-b from-[#d4af37]/5 via-transparent to-transparent" />
 
-        <div className="relative max-w-7xl mx-auto px-6 py-20">
+        <div className="relative max-w-7xl mx-auto px-6 pt-28 pb-16">
           <div className="text-center max-w-xl mx-auto">
             <h1 className="text-4xl md:text-5xl font-serif font-light text-white mb-3 tracking-wider">
               The <span className="text-[#f5f5dc]">Boutique</span>
@@ -91,7 +91,7 @@ function Store() {
       </div>
 
       {/* Category Filter */}
-      <div className="max-w-7xl mx-auto px-6 mb-10">
+      <div className="max-w-7xl mx-auto px-6 mb-12 mt-4">
         <div className="flex flex-wrap items-center justify-center gap-2">
           {CATEGORIES.map((category) => (
             <button
@@ -111,7 +111,7 @@ function Store() {
 
       {/* Items Grid */}
       <div className="max-w-7xl mx-auto px-6 pb-20">
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
           {filteredItems.map((item) => (
             <StoreItem key={item.id} item={item} />
           ))}

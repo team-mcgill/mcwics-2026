@@ -23,16 +23,11 @@ function NavLink({ to, children, isActive }) {
   return (
     <Link
       to={to}
-      className={`relative font-light tracking-widest text-sm uppercase transition-colors duration-300 ${
-        isActive ? 'text-[#d4af37]' : 'text-[#718096] hover:text-[#a0a0a0]'
+      className={`font-light text-sm tracking-wide transition-colors duration-300 ${
+        isActive ? 'text-[#f5f5dc]' : 'text-[#718096] hover:text-[#a0a0a0]'
       }`}
     >
       {children}
-      <span
-        className={`absolute -bottom-1 left-0 h-px bg-[#d4af37] transition-all duration-300 ${
-          isActive ? 'w-full' : 'w-0 group-hover:w-full'
-        }`}
-      />
     </Link>
   )
 }
@@ -42,22 +37,24 @@ function Navigation() {
   const isActive = (path) => location.pathname === path
 
   return (
-    <nav className="fixed top-0 left-0 right-0 z-50 bg-[#0a0a0a]/80 backdrop-blur-sm">
-      <div className="max-w-7xl mx-auto px-6">
-        <div className="flex items-center justify-between h-20">
+    <nav className="absolute top-0 left-0 right-0 z-50">
+      <div className="max-w-7xl mx-auto px-6 pt-10">
+        <div className="flex items-center justify-between">
           <Link to="/" className="flex items-center group">
             <MasqueradeLogo />
-            <span className="text-lg font-serif font-light text-white tracking-[0.2em] group-hover:text-[#d4af37] transition-elegant">
-              MASQUERADE
+            <span className="text-sm font-serif font-light text-white/80 tracking-[0.1em] group-hover:text-[#f5f5dc] transition-elegant">
+              Masquerade
             </span>
           </Link>
-          <div className="flex items-center gap-10">
+          
+          <div className="flex items-center gap-16">
             <NavLink to="/" isActive={isActive('/')}>Rooms</NavLink>
             <NavLink to="/store" isActive={isActive('/store')}>Store</NavLink>
             <NavLink to="/character" isActive={isActive('/character')}>Character</NavLink>
-            <div className="ml-2">
-              <WalletMultiButton className="!h-9 !px-4 !rounded-lg !text-xs !font-light !tracking-wider !uppercase" />
-            </div>
+          </div>
+
+          <div>
+            <WalletMultiButton className="!h-8 !px-3 !rounded !text-xs !font-light !tracking-wide !normal-case" />
           </div>
         </div>
       </div>
@@ -69,7 +66,7 @@ function App() {
   return (
     <BrowserRouter>
       <Navigation />
-      <div className="pt-20">
+      <div>
         <Routes>
           <Route path="/" element={<Home />} />
           <Route path="/store" element={<Store />} />

@@ -60,7 +60,7 @@ function RoomCard({ room }) {
       </div>
 
       <div className="relative px-6 pb-6">
-        <button className="w-full py-3 rounded-lg bg-[#d4af37] text-[#0a0a0a] font-light text-sm tracking-wider uppercase hover:bg-[#e8c547] hover:-translate-y-0.5 transition-all duration-300">
+        <button className="w-full py-3 rounded-lg text-[#0a0a0a] font-light text-sm tracking-wider uppercase btn-convex transition-all duration-300">
           Enter Room
         </button>
       </div>
@@ -103,7 +103,7 @@ function Home() {
         <div className="absolute top-32 left-20 w-96 h-96 bg-[#d4af37]/5 rounded-full blur-[100px]" />
         <div className="absolute top-48 right-32 w-64 h-64 bg-[#8b7355]/5 rounded-full blur-[80px]" />
 
-        <div className="relative max-w-7xl mx-auto px-6 py-24">
+        <div className="relative max-w-7xl mx-auto px-6 pt-32 pb-24">
           <div className="text-center max-w-2xl mx-auto">
             <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-[#111] mb-8 inner-glow">
               <span className="w-1.5 h-1.5 rounded-full bg-[#d4af37] animate-pulse" />
@@ -125,7 +125,7 @@ function Home() {
             <div className="flex items-center justify-center gap-4">
               <Link
                 to="/character"
-                className="px-8 py-3 rounded-lg bg-[#d4af37] text-[#0a0a0a] font-light text-sm tracking-widest uppercase hover:bg-[#e8c547] hover:-translate-y-0.5 transition-all duration-300"
+                className="px-8 py-3 rounded-lg text-[#0a0a0a] font-light text-sm tracking-widest uppercase btn-convex transition-all duration-300"
               >
                 Customize Mask
               </Link>

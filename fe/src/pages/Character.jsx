@@ -1,24 +1,43 @@
+import { useRef, useState } from 'react'
 import { FaceMeshPainter } from '../components/FaceMeshPainter'
+import { MaskInventory } from '../components/MaskInventory'
 
 function Character() {
+  const painterRef = useRef(null)
+  const [activeDesign, setActiveDesign] = useState(null)
+
   return (
-    <div className="min-h-screen bg-[#0a0a0a] py-8">
-      <div className="max-w-6xl mx-auto px-6">
+    <div className="min-h-screen bg-[#0a0a0a] pt-28 pb-8">
+      <div className="max-w-7xl mx-auto px-6">
         {/* Header */}
-        <div className="text-center mb-10">
-          <h1 className="text-4xl font-serif font-light text-white mb-3 tracking-wider">
+        <div className="mb-8">
+          <h1 className="text-3xl font-serif font-light text-white mb-2 tracking-wider">
             Your <span className="text-[#f5f5dc]">Mask</span>
           </h1>
-          <p className="text-sm font-light text-[#718096] max-w-lg mx-auto tracking-wide">
-            Customize your masquerade identity. Paint directly on your face mesh to create a unique look for the ballroom.
+          <p className="text-sm font-light text-[#718096] max-w-xl tracking-wide">
+            Customize your masquerade identity. Paint directly on your face mesh, then save your designs to your collection.
           </p>
         </div>
 
-        {/* Painter Container */}
-        <div className="rounded-2xl bg-[#111] p-6 inner-glow">
-          <FaceMeshPainter />
-        </div>
+        {/* Two Column Layout */}
+        <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
+          {/* Left Column - Painter (3/5 width) */}
+          <div className="lg:col-span-3">
+            <div className="rounded-2xl bg-[#111] inner-glow p-6">
+              <FaceMeshPainter ref={painterRef} />
+            </div>
+          </div>
 
+          {/* Right Column - Inventory (2/5 width) */}
+          <div className="lg:col-span-2">
+            <div className="rounded-2xl bg-[#111] inner-glow p-6 h-[600px] lg:h-[calc(100vh-200px)] lg:max-h-[800px]">
+              <MaskInventory 
+                painterRef={painterRef}
+                onDesignLoad={setActiveDesign}
+              />
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   )
