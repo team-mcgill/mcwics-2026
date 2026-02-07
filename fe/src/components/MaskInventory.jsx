@@ -5,6 +5,8 @@ import { fetchWalletDesignInventory, FALLBACK_IMAGE } from '../lib/solana/invent
 export function MaskInventory({ painterRef, onDesignLoad, onMintDesign }) {
   const [designs, setDesigns] = useState([]);
   const [isSaving, setIsSaving] = useState(false);
+  const [savePhase, setSavePhase] = useState('idle');
+  const [lastMintSignature, setLastMintSignature] = useState('');
   const [mintingId, setMintingId] = useState(null);
   const [showSaveModal, setShowSaveModal] = useState(false);
   const [designName, setDesignName] = useState('');
@@ -52,6 +54,8 @@ export function MaskInventory({ painterRef, onDesignLoad, onMintDesign }) {
     }
     
     setIsSaving(true);
+    setSavePhase('submitting');
+    setLastMintSignature('');
     try {
       const imageData = painterRef.current.exportDesign();
 
@@ -59,16 +63,24 @@ export function MaskInventory({ painterRef, onDesignLoad, onMintDesign }) {
         throw new Error('Minting handler is not connected. Wire your mint flow into MaskInventory via onMintDesign.');
       }
 
-      await onMintDesign({
+      const mintResult = await onMintDesign({
         name: designName.trim(),
         imageData,
       });
 
+      setSavePhase('confirmed');
+      if (mintResult?.signature) {
+        setLastMintSignature(mintResult.signature);
+      }
+
       setShowSaveModal(false);
+      setSavePhase('refreshing');
       await refreshInventory();
+      setSavePhase('idle');
     } catch (err) {
       console.error('Failed to save design:', err);
       alert(err instanceof Error ? err.message : 'Failed to save design.');
+      setSavePhase('idle');
     } finally {
       setIsSaving(false);
     }
@@ -90,11 +102,14 @@ export function MaskInventory({ painterRef, onDesignLoad, onMintDesign }) {
 
     setMintingId(design.id);
     try {
-      await onMintDesign({
+      const mintResult = await onMintDesign({
         name: design.name,
         imageData: design.imageData,
         replaceMintAddress: design.mintAddress,
       });
+      if (mintResult?.signature) {
+        setLastMintSignature(mintResult.signature);
+      }
       await refreshInventory();
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Minting failed.');
@@ -120,15 +135,15 @@ export function MaskInventory({ painterRef, onDesignLoad, onMintDesign }) {
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h2 className="text-lg font-serif text-white tracking-wider">Your Collection</h2>
-          <p className="text-xs text-[#718096] font-light">
+          <h2 className="text-base font-serif font-light text-white/90 tracking-wider">Your Collection</h2>
+          <p className="text-xs text-[#718096] font-light mt-1">
             {publicKey ? `${designs.length} design${designs.length !== 1 ? 's' : ''} on devnet` : 'Connect wallet to load devnet inventory'}
           </p>
         </div>
         <button
           onClick={handleSaveClick}
           disabled={isSaving || !painterRef.current || !publicKey}
-          className="px-4 py-2 bg-[#d4af37] text-black text-xs font-medium tracking-wider uppercase rounded-lg hover:bg-[#c4a030] transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+          className="px-4 py-2 btn-convex text-[#0a0a0a] text-xs font-light tracking-wider uppercase rounded-lg transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 hover:-translate-y-0.5"
         >
           {isSaving ? (
             <>
@@ -136,7 +151,13 @@ export function MaskInventory({ painterRef, onDesignLoad, onMintDesign }) {
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
               </svg>
-              Saving...
+              {savePhase === 'submitting'
+                ? 'Submitting...'
+                : savePhase === 'confirmed'
+                  ? 'Confirmed...'
+                  : savePhase === 'refreshing'
+                    ? 'Refreshing...'
+                    : 'Saving...'}
             </>
           ) : (
             <>
@@ -148,6 +169,36 @@ export function MaskInventory({ painterRef, onDesignLoad, onMintDesign }) {
           )}
         </button>
       </div>
+
+      {isSaving ? (
+        <div className="mb-4 rounded-lg inner-glow bg-[#d4af37]/5 px-3 py-2">
+          <p className="text-[11px] text-[#8b7355] tracking-wide uppercase">
+            {savePhase === 'submitting'
+              ? 'Transaction submitted to wallet...'
+              : savePhase === 'confirmed'
+                ? 'Transaction confirmed on devnet...'
+                : savePhase === 'refreshing'
+                  ? 'Refreshing inventory...'
+                  : 'Processing...'}
+          </p>
+        </div>
+      ) : null}
+
+      {lastMintSignature ? (
+        <div className="mb-4 rounded-lg inner-glow bg-[#111] px-3 py-2">
+          <p className="text-[11px] text-[#8b7355]">
+            Last mint confirmed.&nbsp;
+            <a
+              href={`https://explorer.solana.com/tx/${lastMintSignature}?cluster=devnet`}
+              target="_blank"
+              rel="noreferrer"
+              className="text-[#d4af37] hover:text-[#e8c547] transition-colors"
+            >
+              View transaction
+            </a>
+          </p>
+        </div>
+      ) : null}
 
       {/* Designs Grid */}
       <div className="flex-1 overflow-y-auto -mx-2 px-2">
@@ -174,8 +225,8 @@ export function MaskInventory({ painterRef, onDesignLoad, onMintDesign }) {
           </div>
         ) : designs.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-64 text-center">
-            <div className="w-16 h-16 rounded-full bg-[#1a1a1a] border border-[#333] flex items-center justify-center mb-4">
-              <svg className="w-8 h-8 text-[#555]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <div className="w-14 h-14 rounded-full bg-[#111] inner-glow flex items-center justify-center mb-4">
+              <svg className="w-6 h-6 text-[#555]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
               </svg>
             </div>
@@ -187,7 +238,7 @@ export function MaskInventory({ painterRef, onDesignLoad, onMintDesign }) {
             {designs.map((design) => (
               <div
                 key={design.id}
-                className="group bg-[#0f0f0f] border border-[#222] hover:border-[#d4af37]/30 rounded-xl overflow-hidden transition-all duration-300"
+                className="group bg-[#111] inner-glow hover:border-[#d4af37]/20 rounded-xl overflow-hidden transition-all duration-300"
               >
                 {/* Thumbnail */}
                 <div className="aspect-square relative overflow-hidden bg-[#1a1a1a]">
@@ -256,8 +307,8 @@ export function MaskInventory({ painterRef, onDesignLoad, onMintDesign }) {
       {/* Save Modal */}
       {showSaveModal && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-[#111] border border-[#333] rounded-2xl p-6 max-w-sm w-full">
-            <h3 className="text-white font-serif text-lg mb-2">Save Design</h3>
+          <div className="bg-[#111] inner-glow rounded-2xl p-6 max-w-sm w-full">
+            <h3 className="text-white font-serif font-light text-lg mb-2 tracking-wide">Save Design</h3>
             <p className="text-[#718096] text-sm font-light mb-4">Give your mask design a name</p>
             
             <input
@@ -265,7 +316,7 @@ export function MaskInventory({ painterRef, onDesignLoad, onMintDesign }) {
               value={designName}
               onChange={(e) => setDesignName(e.target.value)}
               placeholder="Design name..."
-              className="w-full bg-[#0a0a0a] border border-[#333] rounded-lg px-4 py-3 text-white text-sm placeholder-[#555] focus:outline-none focus:border-[#d4af37]/50 mb-4"
+              className="w-full bg-[#0a0a0a] border border-white/10 rounded-lg px-4 py-3 text-white text-sm placeholder-[#555] focus:outline-none focus:border-[#d4af37]/30 mb-4"
               autoFocus
               onKeyDown={(e) => e.key === 'Enter' && confirmSave()}
             />
@@ -280,7 +331,7 @@ export function MaskInventory({ painterRef, onDesignLoad, onMintDesign }) {
               <button
                 onClick={confirmSave}
                 disabled={!designName.trim() || isSaving}
-                className="flex-1 px-4 py-2.5 bg-[#d4af37] text-black text-sm font-medium rounded-lg hover:bg-[#c4a030] transition-colors disabled:opacity-50"
+                className="flex-1 px-4 py-2.5 btn-convex text-[#0a0a0a] text-sm font-light rounded-lg transition-all duration-300 disabled:opacity-50 hover:-translate-y-0.5"
               >
                 Save
               </button>

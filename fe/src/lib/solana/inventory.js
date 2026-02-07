@@ -100,26 +100,24 @@ export async function fetchWalletDesignInventory(connection, ownerPublicKey) {
 
   const metadataAccounts = await connection.getMultipleAccountsInfo(metadataPdas)
 
-  const decoded = metadataAccounts.map((account, index) => {
-    if (!account?.data) return null
-    const metadata = decodeMetadataAccount(account.data)
-    if (!metadata) return null
-    return {
-      mint: mints[index],
-      metadata,
-    }
-  }).filter(Boolean)
-
   const withJson = await Promise.all(
-    decoded.map(async (item) => ({
-      ...item,
-      metadataJson: await fetchJson(item.metadata.uri),
-    }))
+    mints.map(async (mint, index) => {
+      const account = metadataAccounts[index]
+      const metadata = account?.data ? decodeMetadataAccount(account.data) : null
+      const metadataJson = metadata?.uri ? await fetchJson(metadata.uri) : null
+
+      return {
+        mint,
+        metadata,
+        metadataJson,
+      }
+    })
   )
 
   return withJson.map((item) => {
     const offchainName = typeof item.metadataJson?.name === 'string' ? item.metadataJson.name.trim() : ''
-    const name = offchainName || item.metadata.name || `Mask ${item.mint.slice(0, 6)}`
+    const onchainName = typeof item.metadata?.name === 'string' ? item.metadata.name.trim() : ''
+    const name = offchainName || onchainName || `Mask ${item.mint.slice(0, 6)}`
     return {
       id: item.mint,
       mintAddress: item.mint,
@@ -127,7 +125,7 @@ export async function fetchWalletDesignInventory(connection, ownerPublicKey) {
       imageData: resolveImage(item.metadataJson),
       createdAt: item.metadataJson?.createdAt ?? null,
       minted: true,
-      metadataUri: item.metadata.uri,
+      metadataUri: item.metadata?.uri ?? null,
       hasImageFallback: !item.metadataJson?.image,
     }
   })

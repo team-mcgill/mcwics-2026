@@ -227,10 +227,10 @@ export const FaceMeshPainter = forwardRef(function FaceMeshPainter(props, ref) {
         scene.add(paintMesh);
 
         const wireMaterial = new THREE.MeshBasicMaterial({
-          color: 0x00ff00,
+          color: 0xd4af37,
           wireframe: true,
           transparent: true,
-          opacity: 0.55,
+          opacity: 0.35,
           side: THREE.DoubleSide,
           depthTest: false,
         });
