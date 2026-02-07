@@ -57,7 +57,12 @@ export function MaskInventory({ painterRef, onDesignLoad, onMintDesign }) {
     setSavePhase('submitting');
     setLastMintSignature('');
     try {
-      const imageData = painterRef.current.exportDesign();
+      const exported = typeof painterRef.current.exportDesignState === 'function'
+        ? painterRef.current.exportDesignState()
+        : {
+          imageData: painterRef.current.exportDesign(),
+          strokeData: [],
+        };
 
       if (typeof onMintDesign !== 'function') {
         throw new Error('Minting handler is not connected. Wire your mint flow into MaskInventory via onMintDesign.');
@@ -65,7 +70,8 @@ export function MaskInventory({ painterRef, onDesignLoad, onMintDesign }) {
 
       const mintResult = await onMintDesign({
         name: designName.trim(),
-        imageData,
+        imageData: exported.imageData,
+        strokeData: exported.strokeData,
       });
 
       setSavePhase('confirmed');
@@ -88,7 +94,10 @@ export function MaskInventory({ painterRef, onDesignLoad, onMintDesign }) {
 
   const handleLoadDesign = (design) => {
     if (painterRef.current) {
-      painterRef.current.loadDesign(design.imageData);
+      painterRef.current.loadDesign({
+        imageData: design.paintData || design.imageData,
+        strokeData: design.strokeData,
+      });
       onDesignLoad?.(design);
     }
   };
@@ -105,6 +114,7 @@ export function MaskInventory({ painterRef, onDesignLoad, onMintDesign }) {
       const mintResult = await onMintDesign({
         name: design.name,
         imageData: design.imageData,
+        strokeData: design.strokeData,
         replaceMintAddress: design.mintAddress,
       });
       if (mintResult?.signature) {

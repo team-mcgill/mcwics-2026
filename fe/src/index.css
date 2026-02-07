@@ -210,23 +210,31 @@ body {
   color: #f5f5dc !important;
 }
 
-/* Connected wallet button (in navbar) */
+/* Connected wallet button (in navbar) - Convex style */
 .wallet-adapter-button-trigger {
-  background: transparent !important;
-  color: #718096 !important;
-  font-weight: 300 !important;
-  font-size: 0.75rem !important;
+  background: linear-gradient(180deg, #e8c547 0%, #d4af37 50%, #c4a035 100%) !important;
+  color: #0a0a0a !important;
+  font-weight: 400 !important;
+  font-size: 0.7rem !important;
   letter-spacing: 0.05em !important;
-  padding: 6px 12px !important;
-  border-radius: 6px !important;
-  border: 1px solid rgba(255, 255, 255, 0.1) !important;
+  padding: 6px 14px !important;
+  border-radius: 8px !important;
+  border: none !important;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2) !important;
   transition: all 0.3s ease !important;
 }
 
 .wallet-adapter-button-trigger:hover {
-  background: rgba(255, 255, 255, 0.03) !important;
-  border-color: rgba(255, 255, 255, 0.2) !important;
-  color: #a0a0a0 !important;
+  background: linear-gradient(180deg, #f0d050 0%, #e0b840 50%, #d0a838 100%) !important;
+  transform: translateY(-1px) !important;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.25) !important;
+}
+
+.wallet-adapter-button-trigger img,
+.wallet-adapter-button-trigger .wallet-adapter-icon,
+.wallet-adapter-button-trigger [class*="icon"] {
+  filter: none !important;
+  opacity: 1 !important;
 }
 
 /* Wallet icon styling */

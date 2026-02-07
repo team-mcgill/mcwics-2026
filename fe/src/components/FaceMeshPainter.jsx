@@ -7,6 +7,8 @@ import { BrushControls } from './BrushControls';
 
 const VIDEO_WIDTH = 640;
 const VIDEO_HEIGHT = 480;
+const VIDEO_FPS = 24;
+const MAX_PIXEL_RATIO = 1.5;
 
 const DEFAULT_TEX_SIZE = 2048;
 
@@ -46,7 +48,8 @@ export const FaceMeshPainter = forwardRef(function FaceMeshPainter(props, ref) {
   const paintMeshRef = useRef(null);
   const wireMeshRef = useRef(null);
   const raycasterRef = useRef(new THREE.Raycaster());
-  const rafRef = useRef(0);
+  const frameRequestRef = useRef(0);
+  const frameLoopTypeRef = useRef(null);
   const renderSizeRef = useRef({ width: VIDEO_WIDTH, height: VIDEO_HEIGHT });
   const hasLandmarksRef = useRef(false);
 
@@ -75,6 +78,61 @@ export const FaceMeshPainter = forwardRef(function FaceMeshPainter(props, ref) {
 
   const isDrawingRef = useRef(false);
   const lastUvRef = useRef(null);
+  const strokesRef = useRef([]);
+  const activeStrokeRef = useRef(null);
+
+  const getScaledBrushWidth = useCallback((size) => {
+    const { width } = renderSizeRef.current;
+    const scale = width > 0 ? paintCanvas.width / width : paintCanvas.width / VIDEO_WIDTH;
+    return Math.max(1, size * scale);
+  }, [paintCanvas.width]);
+
+  const renderScene = useCallback(() => {
+    const renderer = rendererRef.current;
+    const scene = sceneRef.current;
+    const camera = cameraRef.current;
+    if (!renderer || !scene || !camera) return;
+    renderer.render(scene, camera);
+  }, []);
+
+  const drawStrokeList = useCallback((strokes) => {
+    const ctx = paintCtxRef.current;
+    const texture = textureRef.current;
+    if (!ctx || !texture) return;
+
+    ctx.clearRect(0, 0, paintCanvas.width, paintCanvas.height);
+
+    for (const stroke of strokes) {
+      if (!stroke || !Array.isArray(stroke.points) || stroke.points.length === 0) {
+        continue;
+      }
+
+      const lineWidth = getScaledBrushWidth(stroke.size);
+      const points = stroke.points;
+
+      if (points.length === 1) {
+        ctx.beginPath();
+        ctx.fillStyle = stroke.color;
+        ctx.arc(points[0].x * paintCanvas.width, points[0].y * paintCanvas.height, lineWidth / 2, 0, Math.PI * 2);
+        ctx.fill();
+        continue;
+      }
+
+      ctx.beginPath();
+      ctx.strokeStyle = stroke.color;
+      ctx.lineWidth = lineWidth;
+      ctx.moveTo(points[0].x * paintCanvas.width, points[0].y * paintCanvas.height);
+
+      for (let i = 1; i < points.length; i += 1) {
+        ctx.lineTo(points[i].x * paintCanvas.width, points[i].y * paintCanvas.height);
+      }
+
+      ctx.stroke();
+    }
+
+    texture.needsUpdate = true;
+    renderScene();
+  }, [getScaledBrushWidth, paintCanvas.height, paintCanvas.width, renderScene]);
 
   const updateRenderSize = useCallback((width, height) => {
     const safeWidth = Math.max(1, Math.round(width));
@@ -94,7 +152,16 @@ export const FaceMeshPainter = forwardRef(function FaceMeshPainter(props, ref) {
       camera.bottom = -safeHeight / 2;
       camera.updateProjectionMatrix();
     }
-  }, []);
+
+    renderScene();
+  }, [renderScene]);
+
+  useEffect(() => {
+    const wireMesh = wireMeshRef.current;
+    if (!wireMesh) return;
+    wireMesh.visible = showFaceMesh;
+    renderScene();
+  }, [showFaceMesh, renderScene]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -123,7 +190,12 @@ export const FaceMeshPainter = forwardRef(function FaceMeshPainter(props, ref) {
 
         // Camera
         const stream = await navigator.mediaDevices.getUserMedia({
-          video: { width: VIDEO_WIDTH, height: VIDEO_HEIGHT, facingMode: 'user' },
+          video: {
+            width: VIDEO_WIDTH,
+            height: VIDEO_HEIGHT,
+            frameRate: { ideal: VIDEO_FPS, max: VIDEO_FPS },
+            facingMode: 'user',
+          },
           audio: false,
         });
 
@@ -160,8 +232,10 @@ export const FaceMeshPainter = forwardRef(function FaceMeshPainter(props, ref) {
 
         try {
           faceLandmarkerRef.current = await create('GPU');
+          console.info('[FaceMeshPainter] FaceLandmarker delegate: GPU');
         } catch {
           faceLandmarkerRef.current = await create('CPU');
+          console.info('[FaceMeshPainter] FaceLandmarker delegate: CPU (fallback)');
         }
 
         if (!isActive) return;
@@ -174,8 +248,9 @@ export const FaceMeshPainter = forwardRef(function FaceMeshPainter(props, ref) {
           canvas,
           antialias: true,
           alpha: true,
+          powerPreference: 'high-performance',
         });
-        renderer.setPixelRatio(window.devicePixelRatio);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, MAX_PIXEL_RATIO));
         renderer.setSize(VIDEO_WIDTH, VIDEO_HEIGHT, false);
         renderer.setClearColor(0x000000, 0);
         rendererRef.current = renderer;
@@ -208,6 +283,10 @@ export const FaceMeshPainter = forwardRef(function FaceMeshPainter(props, ref) {
         geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
         geometry.setAttribute('uv', new THREE.BufferAttribute(UV_COORDS, 2));
         geometry.setIndex(new THREE.BufferAttribute(TRIANGULATION, 1));
+        geometry.boundingSphere = new THREE.Sphere(
+          new THREE.Vector3(0, 0, 0),
+          Math.max(VIDEO_WIDTH, VIDEO_HEIGHT)
+        );
         geometryRef.current = geometry;
 
         const texture = new THREE.CanvasTexture(paintCanvas);
@@ -240,19 +319,15 @@ export const FaceMeshPainter = forwardRef(function FaceMeshPainter(props, ref) {
         scene.add(wireMesh);
 
         setIsLoaded(true);
+        renderScene();
 
-        const tick = () => {
-          rafRef.current = requestAnimationFrame(tick);
-
+        const processFrame = () => {
           const v = videoRef.current;
           const landmarker = faceLandmarkerRef.current;
-          const cam = cameraRef.current;
           const geo = geometryRef.current;
-          const r = rendererRef.current;
-          const sc = sceneRef.current;
           const wMesh = wireMeshRef.current;
 
-          if (!v || !landmarker || !cam || !geo || !r || !sc || !wMesh) return;
+          if (!v || !landmarker || !geo || !wMesh) return;
 
           wMesh.visible = showFaceMeshRef.current;
 
@@ -262,7 +337,9 @@ export const FaceMeshPainter = forwardRef(function FaceMeshPainter(props, ref) {
             const landmarks = res.faceLandmarks[0];
             if (landmarks) {
               const attr = geo.getAttribute('position');
+              const pos = attr.array;
               const { width, height } = renderSizeRef.current;
+
               for (let i = 0; i < UV_VERTEX_COUNT; i++) {
                 const lm = landmarks[i];
                 const px = lm.x * width;
@@ -270,20 +347,42 @@ export const FaceMeshPainter = forwardRef(function FaceMeshPainter(props, ref) {
 
                 const x = px - width / 2;
                 const y = -(py - height / 2);
+                const base = i * 3;
 
-                attr.setXYZ(i, x, y, 0);
+                pos[base] = x;
+                pos[base + 1] = y;
+                pos[base + 2] = 0;
               }
+
               attr.needsUpdate = true;
-              geo.computeBoundingSphere();
-              geo.computeBoundingBox();
               hasLandmarksRef.current = true;
             }
           }
 
-          r.render(sc, cam);
+          renderScene();
         };
 
-        tick();
+        const canUseVideoFrames =
+          typeof videoEl.requestVideoFrameCallback === 'function' &&
+          typeof videoEl.cancelVideoFrameCallback === 'function';
+
+        if (canUseVideoFrames) {
+          frameLoopTypeRef.current = 'video';
+          const onVideoFrame = () => {
+            if (!isActive) return;
+            processFrame();
+            frameRequestRef.current = videoEl.requestVideoFrameCallback(onVideoFrame);
+          };
+          frameRequestRef.current = videoEl.requestVideoFrameCallback(onVideoFrame);
+        } else {
+          frameLoopTypeRef.current = 'raf';
+          const onAnimationFrame = () => {
+            if (!isActive) return;
+            processFrame();
+            frameRequestRef.current = requestAnimationFrame(onAnimationFrame);
+          };
+          frameRequestRef.current = requestAnimationFrame(onAnimationFrame);
+        }
       } catch (err) {
         if (!isActive) return;
         if (err instanceof DOMException && err.name === 'AbortError') return;
@@ -296,7 +395,15 @@ export const FaceMeshPainter = forwardRef(function FaceMeshPainter(props, ref) {
 
     return () => {
       isActive = false;
-      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+
+      if (frameLoopTypeRef.current === 'video' && frameRequestRef.current) {
+        videoEl?.cancelVideoFrameCallback?.(frameRequestRef.current);
+      }
+      if (frameLoopTypeRef.current === 'raf' && frameRequestRef.current) {
+        cancelAnimationFrame(frameRequestRef.current);
+      }
+      frameRequestRef.current = 0;
+      frameLoopTypeRef.current = null;
 
       const stream = videoEl?.srcObject ?? null;
       stream?.getTracks().forEach((t) => t.stop());
@@ -315,7 +422,7 @@ export const FaceMeshPainter = forwardRef(function FaceMeshPainter(props, ref) {
       r?.dispose();
       rendererRef.current = null;
     };
-  }, [paintCanvas, updateRenderSize]);
+  }, [paintCanvas, updateRenderSize, renderScene]);
 
   const getUvFromPointerEvent = useCallback((e) => {
     const canvas = webglCanvasRef.current;
@@ -342,10 +449,8 @@ export const FaceMeshPainter = forwardRef(function FaceMeshPainter(props, ref) {
     const ctx = paintCtxRef.current;
     if (!ctx || !textureRef.current) return;
 
-    const { width } = renderSizeRef.current;
-    const scale = width > 0 ? paintCanvas.width / width : paintCanvas.width / VIDEO_WIDTH;
     ctx.strokeStyle = brushColorRef.current;
-    ctx.lineWidth = Math.max(1, brushSizeRef.current * scale);
+    ctx.lineWidth = getScaledBrushWidth(brushSizeRef.current);
 
     const x = uv.x * paintCanvas.width;
     const y = uv.y * paintCanvas.height;
@@ -364,9 +469,14 @@ export const FaceMeshPainter = forwardRef(function FaceMeshPainter(props, ref) {
       ctx.fill();
     }
 
+    if (activeStrokeRef.current) {
+      activeStrokeRef.current.points.push({ x: uv.x, y: uv.y });
+    }
+
     lastUvRef.current = uv;
     textureRef.current.needsUpdate = true;
-  }, [paintCanvas]);
+    renderScene();
+  }, [getScaledBrushWidth, paintCanvas, renderScene]);
 
   useEffect(() => {
     const canvas = webglCanvasRef.current;
@@ -376,7 +486,17 @@ export const FaceMeshPainter = forwardRef(function FaceMeshPainter(props, ref) {
       isDrawingRef.current = true;
       canvas.setPointerCapture(e.pointerId);
       const uv = getUvFromPointerEvent(e);
-      if (uv) paintAtUv(uv);
+      if (!uv) return;
+
+      const stroke = {
+        color: brushColorRef.current,
+        size: brushSizeRef.current,
+        points: [],
+      };
+
+      strokesRef.current = [...strokesRef.current, stroke];
+      activeStrokeRef.current = stroke;
+      paintAtUv(uv);
     };
 
     const onPointerMove = (e) => {
@@ -388,6 +508,7 @@ export const FaceMeshPainter = forwardRef(function FaceMeshPainter(props, ref) {
     const onPointerUp = () => {
       isDrawingRef.current = false;
       lastUvRef.current = null;
+      activeStrokeRef.current = null;
     };
 
     canvas.addEventListener('pointerdown', onPointerDown);
@@ -409,25 +530,98 @@ export const FaceMeshPainter = forwardRef(function FaceMeshPainter(props, ref) {
     const ctx = paintCtxRef.current;
     if (!ctx || !textureRef.current) return;
     ctx.clearRect(0, 0, paintCanvas.width, paintCanvas.height);
+    strokesRef.current = [];
+    activeStrokeRef.current = null;
+    lastUvRef.current = null;
     textureRef.current.needsUpdate = true;
-  }, [paintCanvas.width, paintCanvas.height]);
+    renderScene();
+  }, [paintCanvas.width, paintCanvas.height, renderScene]);
+
+  const normalizeStrokeData = useCallback((strokeData) => {
+    if (!Array.isArray(strokeData)) return [];
+
+    return strokeData
+      .map((stroke) => {
+        if (!stroke || typeof stroke !== 'object') return null;
+        if (typeof stroke.color !== 'string' || !stroke.color.trim()) return null;
+        if (!Number.isFinite(stroke.size)) return null;
+        if (!Array.isArray(stroke.points)) return null;
+
+        const points = stroke.points
+          .filter((point) => point && Number.isFinite(point.x) && Number.isFinite(point.y))
+          .map((point) => ({
+            x: Math.max(0, Math.min(1, point.x)),
+            y: Math.max(0, Math.min(1, point.y)),
+          }));
+
+        if (!points.length) return null;
+
+        return {
+          color: stroke.color,
+          size: Math.max(1, Number(stroke.size)),
+          points,
+        };
+      })
+      .filter(Boolean);
+  }, []);
 
   // Expose methods to parent via ref
   useImperativeHandle(ref, () => ({
     exportDesign: () => paintCanvas.toDataURL('image/png'),
-    loadDesign: (dataUrl) => {
+    exportDesignState: () => ({
+      imageData: paintCanvas.toDataURL('image/png'),
+      strokeData: JSON.parse(JSON.stringify(strokesRef.current)),
+    }),
+    loadDesign: (input) => {
       const ctx = paintCtxRef.current;
       if (!ctx || !textureRef.current) return;
-      const img = new Image();
-      img.onload = () => {
-        ctx.clearRect(0, 0, paintCanvas.width, paintCanvas.height);
-        ctx.drawImage(img, 0, 0);
-        textureRef.current.needsUpdate = true;
+
+      const loadImage = (dataUrl) => {
+        if (typeof dataUrl !== 'string' || !dataUrl.trim()) {
+          return;
+        }
+
+        strokesRef.current = [];
+        activeStrokeRef.current = null;
+        lastUvRef.current = null;
+
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.onload = () => {
+          ctx.clearRect(0, 0, paintCanvas.width, paintCanvas.height);
+          ctx.drawImage(img, 0, 0);
+          textureRef.current.needsUpdate = true;
+          renderScene();
+        };
+        img.src = dataUrl;
       };
-      img.src = dataUrl;
+
+      if (typeof input === 'string') {
+        loadImage(input);
+        return;
+      }
+
+      const strokeData = normalizeStrokeData(input?.strokeData);
+      if (strokeData.length) {
+        strokesRef.current = strokeData;
+        activeStrokeRef.current = null;
+        lastUvRef.current = null;
+        drawStrokeList(strokeData);
+        return;
+      }
+
+      loadImage(input?.imageData ?? input?.paintData ?? null);
+    },
+    exportStrokeData: () => JSON.parse(JSON.stringify(strokesRef.current)),
+    setStrokeData: (strokeData) => {
+      const normalized = normalizeStrokeData(strokeData);
+      strokesRef.current = normalized;
+      activeStrokeRef.current = null;
+      lastUvRef.current = null;
+      drawStrokeList(normalized);
     },
     clearDrawing,
-  }), [paintCanvas, clearDrawing]);
+  }), [clearDrawing, drawStrokeList, normalizeStrokeData, paintCanvas, renderScene]);
 
   const handleLoadedMetadata = () => {
     const video = videoRef.current;

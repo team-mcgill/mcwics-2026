@@ -53,7 +53,7 @@ function Navigation() {
             <NavLink to="/character" isActive={isActive('/character')}>Character</NavLink>
           </div>
 
-          <div>
+          <div className="[&>*]:!bg-transparent [&>*]:!border-0 [&>*]:!shadow-none">
             <WalletMultiButton className="!h-8 !px-3 !rounded !text-xs !font-light !tracking-wide !normal-case" />
           </div>
         </div>

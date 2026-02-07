@@ -66,6 +66,48 @@ function resolveImage(metadataJson) {
   return FALLBACK_IMAGE
 }
 
+function resolveMaskTexture(metadataJson) {
+  if (
+    metadataJson
+    && metadataJson.properties
+    && typeof metadataJson.properties.maskTexture === 'string'
+    && metadataJson.properties.maskTexture.trim()
+  ) {
+    return metadataJson.properties.maskTexture
+  }
+
+  return resolveImage(metadataJson)
+}
+
+function resolveStrokeData(metadataJson) {
+  const candidate = metadataJson?.properties?.strokeData
+  if (!Array.isArray(candidate)) return []
+
+  return candidate
+    .map((stroke) => {
+      if (!stroke || typeof stroke !== 'object') return null
+      if (typeof stroke.color !== 'string' || !stroke.color.trim()) return null
+      if (!Number.isFinite(stroke.size)) return null
+      if (!Array.isArray(stroke.points)) return null
+
+      const points = stroke.points
+        .filter((point) => point && Number.isFinite(point.x) && Number.isFinite(point.y))
+        .map((point) => ({
+          x: Math.max(0, Math.min(1, point.x)),
+          y: Math.max(0, Math.min(1, point.y)),
+        }))
+
+      if (!points.length) return null
+
+      return {
+        color: stroke.color,
+        size: Math.max(1, Number(stroke.size)),
+        points,
+      }
+    })
+    .filter(Boolean)
+}
+
 export async function fetchWalletDesignInventory(connection, ownerPublicKey) {
   if (!ownerPublicKey) return []
 
@@ -123,6 +165,8 @@ export async function fetchWalletDesignInventory(connection, ownerPublicKey) {
       mintAddress: item.mint,
       name,
       imageData: resolveImage(item.metadataJson),
+      paintData: resolveMaskTexture(item.metadataJson),
+      strokeData: resolveStrokeData(item.metadataJson),
       createdAt: item.metadataJson?.createdAt ?? null,
       minted: true,
       metadataUri: item.metadata?.uri ?? null,

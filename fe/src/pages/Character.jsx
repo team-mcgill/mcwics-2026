@@ -2,24 +2,33 @@ import { useCallback, useRef, useState } from 'react'
 import { useConnection, useWallet } from '@solana/wallet-adapter-react'
 import { FaceMeshPainter } from '../components/FaceMeshPainter'
 import { MaskInventory } from '../components/MaskInventory'
+import { uploadDesignMetadataWithWalletAuth } from '../lib/api/designUpload'
 import { mintMaskDesign } from '../lib/solana/mintDesign'
 
 function Character() {
   const painterRef = useRef(null)
   const [activeDesign, setActiveDesign] = useState(null)
   const { connection } = useConnection()
-  const { publicKey, sendTransaction } = useWallet()
+  const { publicKey, sendTransaction, signMessage } = useWallet()
 
-  const handleMintDesign = useCallback(async ({ name, imageData, replaceMintAddress }) => {
+  const handleMintDesign = useCallback(async ({ name, imageData, strokeData }) => {
+    const uploaded = await uploadDesignMetadataWithWalletAuth({
+      publicKey,
+      signMessage,
+      name,
+      imageData,
+      strokeData,
+    })
+
     return mintMaskDesign({
       name,
       imageData,
-      replaceMintAddress,
+      metadataUri: uploaded.metadataUrl,
       connection,
       publicKey,
       sendTransaction,
     })
-  }, [connection, publicKey, sendTransaction])
+  }, [connection, publicKey, sendTransaction, signMessage])
 
   return (
     <div className="min-h-screen bg-[#0a0a0a] pt-28 pb-8">
