@@ -5,6 +5,7 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 from uuid import uuid4
 
 
@@ -84,6 +85,44 @@ def _normalize_stroke_data(stroke_data: Any) -> list[dict[str, Any]]:
     return normalized
 
 
+def _resolve_local_upload_file(
+    uploads_root: Path,
+    base_url: str,
+    wallet: str,
+    file_url: str,
+    *,
+    expected_suffix: str,
+) -> Path | None:
+    if not isinstance(file_url, str) or not file_url.strip():
+        return None
+
+    parsed = urlparse(file_url.strip())
+    parsed_base = urlparse(base_url)
+
+    if parsed.scheme not in {"http", "https"}:
+        return None
+
+    if parsed.netloc != parsed_base.netloc:
+        return None
+
+    wallet_prefix = f"/uploads/designs/{wallet}/"
+    if not parsed.path.startswith(wallet_prefix):
+        return None
+
+    if not parsed.path.endswith(expected_suffix):
+        return None
+
+    relative_path = parsed.path.removeprefix("/uploads/")
+    resolved = (uploads_root / relative_path).resolve()
+
+    try:
+        resolved.relative_to(uploads_root.resolve())
+    except ValueError:
+        return None
+
+    return resolved
+
+
 def persist_design_assets(
     uploads_root: Path,
     base_url: str,
@@ -133,4 +172,132 @@ def persist_design_assets(
         "imageUrl": image_url,
         "metadataUrl": metadata_url,
         "maskTextureUrl": image_url,
+    }
+
+
+def update_design_assets(
+    uploads_root: Path,
+    base_url: str,
+    wallet: str,
+    metadata_uri: str,
+    name: str,
+    image_data_url: str,
+    stroke_data: Any = None,
+) -> dict[str, str]:
+    metadata_path = _resolve_local_upload_file(
+        uploads_root,
+        base_url,
+        wallet,
+        metadata_uri,
+        expected_suffix=".json",
+    )
+    if metadata_path is None or not metadata_path.exists():
+        raise ValueError("Design metadata is not hosted on this backend or not found")
+
+    try:
+        existing_metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise ValueError("Stored metadata is invalid") from exc
+
+    image_url = existing_metadata.get("image")
+    image_path = _resolve_local_upload_file(
+        uploads_root,
+        base_url,
+        wallet,
+        image_url,
+        expected_suffix="",
+    )
+    if image_path is None:
+        raise ValueError("Design image is not hosted on this backend")
+
+    image_bytes, _ = _decode_data_url(image_data_url)
+    image_path.write_bytes(image_bytes)
+
+    normalized_strokes = _normalize_stroke_data(stroke_data)
+    updated_at = datetime.now(timezone.utc).isoformat()
+
+    existing_metadata["name"] = name
+    existing_metadata["image"] = image_url
+    existing_metadata["updatedAt"] = updated_at
+
+    properties = existing_metadata.get("properties")
+    if not isinstance(properties, dict):
+        properties = {}
+
+    properties["maskTexture"] = image_url
+    properties["creatorWallet"] = wallet
+    properties["strokeData"] = normalized_strokes
+    existing_metadata["properties"] = properties
+
+    metadata_path.write_text(json.dumps(existing_metadata), encoding="utf-8")
+
+    design_id = metadata_path.stem
+    metadata_url = f"{base_url}/uploads/designs/{wallet}/{metadata_path.name}"
+
+    return {
+        "designId": design_id,
+        "imageUrl": image_url,
+        "metadataUrl": metadata_url,
+        "maskTextureUrl": image_url,
+    }
+
+
+def delete_design_assets(
+    uploads_root: Path,
+    base_url: str,
+    wallet: str,
+    metadata_uri: str,
+) -> dict[str, Any]:
+    metadata_path = _resolve_local_upload_file(
+        uploads_root,
+        base_url,
+        wallet,
+        metadata_uri,
+        expected_suffix=".json",
+    )
+
+    if metadata_path is None:
+        return {
+            "deleted": False,
+            "deletedMetadata": False,
+            "deletedImage": False,
+            "skipped": True,
+            "reason": "Metadata URI is not local to this backend",
+        }
+
+    image_path: Path | None = None
+    if metadata_path.exists():
+        try:
+            metadata_json = json.loads(metadata_path.read_text(encoding="utf-8"))
+            image_url = metadata_json.get("image")
+            image_path = _resolve_local_upload_file(
+                uploads_root,
+                base_url,
+                wallet,
+                image_url,
+                expected_suffix="",
+            )
+        except Exception:
+            image_path = None
+
+    deleted_metadata = False
+    deleted_image = False
+
+    if metadata_path.exists():
+        metadata_path.unlink()
+        deleted_metadata = True
+
+    if image_path is not None and image_path.exists():
+        image_path.unlink()
+        deleted_image = True
+
+    wallet_folder = uploads_root / "designs" / wallet
+    if wallet_folder.exists() and wallet_folder.is_dir() and not any(wallet_folder.iterdir()):
+        wallet_folder.rmdir()
+
+    return {
+        "deleted": deleted_metadata or deleted_image,
+        "deletedMetadata": deleted_metadata,
+        "deletedImage": deleted_image,
+        "skipped": False,
     }

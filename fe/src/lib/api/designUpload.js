@@ -18,13 +18,7 @@ async function parseResponse(response) {
   throw new Error(detail)
 }
 
-export async function uploadDesignMetadataWithWalletAuth({
-  publicKey,
-  signMessage,
-  name,
-  imageData,
-  strokeData,
-}) {
+async function authenticateWallet({ publicKey, signMessage }) {
   if (!publicKey) {
     throw new Error('Please connect your wallet first.')
   }
@@ -60,16 +54,69 @@ export async function uploadDesignMetadataWithWalletAuth({
     })
   )
 
+  return verified.accessToken
+}
+
+export async function uploadDesignMetadataWithWalletAuth({
+  publicKey,
+  signMessage,
+  name,
+  imageData,
+  strokeData,
+}) {
+  const accessToken = await authenticateWallet({ publicKey, signMessage })
+
   const uploaded = await parseResponse(
     await fetch(`${API_BASE_URL}/api/designs/upload`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${verified.accessToken}`,
+        Authorization: `Bearer ${accessToken}`,
       },
       body: JSON.stringify({ name, imageData, strokeData }),
     })
   )
 
   return uploaded
+}
+
+export async function updateDesignMetadataWithWalletAuth({
+  publicKey,
+  signMessage,
+  metadataUri,
+  name,
+  imageData,
+  strokeData,
+}) {
+  const accessToken = await authenticateWallet({ publicKey, signMessage })
+
+  return parseResponse(
+    await fetch(`${API_BASE_URL}/api/designs/update`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({ metadataUri, name, imageData, strokeData }),
+    })
+  )
+}
+
+export async function deleteDesignMetadataWithWalletAuth({
+  publicKey,
+  signMessage,
+  metadataUri,
+}) {
+  const accessToken = await authenticateWallet({ publicKey, signMessage })
+
+  return parseResponse(
+    await fetch(`${API_BASE_URL}/api/designs/delete`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({ metadataUri }),
+    })
+  )
 }

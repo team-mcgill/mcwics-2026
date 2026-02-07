@@ -2,7 +2,12 @@ import { useCallback, useRef, useState } from 'react'
 import { useConnection, useWallet } from '@solana/wallet-adapter-react'
 import { FaceMeshPainter } from '../components/FaceMeshPainter'
 import { MaskInventory } from '../components/MaskInventory'
-import { uploadDesignMetadataWithWalletAuth } from '../lib/api/designUpload'
+import {
+  deleteDesignMetadataWithWalletAuth,
+  updateDesignMetadataWithWalletAuth,
+  uploadDesignMetadataWithWalletAuth,
+} from '../lib/api/designUpload'
+import { burnMaskDesign } from '../lib/solana/burnDesign'
 import { mintMaskDesign } from '../lib/solana/mintDesign'
 
 function Character() {
@@ -28,6 +33,52 @@ function Character() {
       publicKey,
       sendTransaction,
     })
+  }, [connection, publicKey, sendTransaction, signMessage])
+
+  const handleUpdateDesign = useCallback(async ({ metadataUri, name, imageData, strokeData }) => {
+    if (!metadataUri) {
+      throw new Error('Loaded design is missing metadata URI.')
+    }
+
+    return updateDesignMetadataWithWalletAuth({
+      publicKey,
+      signMessage,
+      metadataUri,
+      name,
+      imageData,
+      strokeData,
+    })
+  }, [publicKey, signMessage])
+
+  const handleDeleteDesign = useCallback(async ({ mintAddress, metadataUri }) => {
+    if (!mintAddress) {
+      throw new Error('Design mint address is missing.')
+    }
+
+    const burned = await burnMaskDesign({
+      mintAddress,
+      connection,
+      publicKey,
+      sendTransaction,
+    })
+
+    let cleanupError = ''
+    if (metadataUri) {
+      try {
+        await deleteDesignMetadataWithWalletAuth({
+          publicKey,
+          signMessage,
+          metadataUri,
+        })
+      } catch (error) {
+        cleanupError = error instanceof Error ? error.message : 'Failed to delete backend assets.'
+      }
+    }
+
+    return {
+      signature: burned.signature,
+      cleanupError,
+    }
   }, [connection, publicKey, sendTransaction, signMessage])
 
   return (
@@ -59,6 +110,8 @@ function Character() {
                 painterRef={painterRef}
                 onDesignLoad={setActiveDesign}
                 onMintDesign={handleMintDesign}
+                onUpdateDesign={handleUpdateDesign}
+                onDeleteDesign={handleDeleteDesign}
               />
             </div>
           </div>

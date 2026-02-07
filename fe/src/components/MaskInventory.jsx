@@ -2,12 +2,16 @@ import { useState, useEffect, useCallback } from 'react';
 import { useWallet, useConnection } from '@solana/wallet-adapter-react';
 import { fetchWalletDesignInventory, FALLBACK_IMAGE } from '../lib/solana/inventory';
 
-export function MaskInventory({ painterRef, onDesignLoad, onMintDesign }) {
+export function MaskInventory({ painterRef, onDesignLoad, onMintDesign, onUpdateDesign, onDeleteDesign }) {
   const [designs, setDesigns] = useState([]);
+  const [loadedDesignId, setLoadedDesignId] = useState(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [saveMode, setSaveMode] = useState('create');
   const [savePhase, setSavePhase] = useState('idle');
   const [lastMintSignature, setLastMintSignature] = useState('');
-  const [mintingId, setMintingId] = useState(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [deletingDesign, setDeletingDesign] = useState(null);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [showSaveModal, setShowSaveModal] = useState(false);
   const [designName, setDesignName] = useState('');
   const [isLoadingInventory, setIsLoadingInventory] = useState(false);
@@ -40,9 +44,24 @@ export function MaskInventory({ painterRef, onDesignLoad, onMintDesign }) {
     refreshInventory();
   }, [refreshInventory]);
 
+  const loadedDesign = loadedDesignId ? designs.find((design) => design.id === loadedDesignId) ?? null : null;
+
+  useEffect(() => {
+    if (loadedDesignId && !loadedDesign) {
+      setLoadedDesignId(null);
+      onDesignLoad?.(null);
+    }
+  }, [loadedDesign, loadedDesignId, onDesignLoad]);
+
   const handleSaveClick = () => {
     if (!painterRef.current) return;
-    setDesignName(`Mask Design ${designs.length + 1}`);
+    if (loadedDesign) {
+      setDesignName(loadedDesign.name);
+      setSaveMode('overwrite');
+    } else {
+      setDesignName(`Mask Design ${designs.length + 1}`);
+      setSaveMode('create');
+    }
     setShowSaveModal(true);
   };
 
@@ -64,15 +83,35 @@ export function MaskInventory({ painterRef, onDesignLoad, onMintDesign }) {
           strokeData: [],
         };
 
-      if (typeof onMintDesign !== 'function') {
-        throw new Error('Minting handler is not connected. Wire your mint flow into MaskInventory via onMintDesign.');
-      }
+      let mintResult;
+      if (loadedDesignId) {
+        if (!loadedDesign?.metadataUri) {
+          throw new Error('Loaded design cannot be overwritten because metadata URI is missing.');
+        }
 
-      const mintResult = await onMintDesign({
-        name: designName.trim(),
-        imageData: exported.imageData,
-        strokeData: exported.strokeData,
-      });
+        if (typeof onUpdateDesign !== 'function') {
+          throw new Error('Update handler is not connected. Wire onUpdateDesign into MaskInventory.');
+        }
+
+        mintResult = await onUpdateDesign({
+          id: loadedDesign.id,
+          mintAddress: loadedDesign.mintAddress,
+          metadataUri: loadedDesign.metadataUri,
+          name: designName.trim(),
+          imageData: exported.imageData,
+          strokeData: exported.strokeData,
+        });
+      } else {
+        if (typeof onMintDesign !== 'function') {
+          throw new Error('Minting handler is not connected. Wire your mint flow into MaskInventory via onMintDesign.');
+        }
+
+        mintResult = await onMintDesign({
+          name: designName.trim(),
+          imageData: exported.imageData,
+          strokeData: exported.strokeData,
+        });
+      }
 
       setSavePhase('confirmed');
       if (mintResult?.signature) {
@@ -82,6 +121,9 @@ export function MaskInventory({ painterRef, onDesignLoad, onMintDesign }) {
       setShowSaveModal(false);
       setSavePhase('refreshing');
       await refreshInventory();
+      if (loadedDesignId) {
+        setLoadedDesignId(loadedDesignId);
+      }
       setSavePhase('idle');
     } catch (err) {
       console.error('Failed to save design:', err);
@@ -98,33 +140,47 @@ export function MaskInventory({ painterRef, onDesignLoad, onMintDesign }) {
         imageData: design.paintData || design.imageData,
         strokeData: design.strokeData,
       });
+      setLoadedDesignId(design.id);
       onDesignLoad?.(design);
     }
   };
 
-  const handleMintDesign = async (design) => {
-    if (!publicKey || !painterRef.current) return;
-    if (typeof onMintDesign !== 'function') {
-      alert('Mint handler is not connected.');
+  const handleDeleteClick = (design) => {
+    setDeletingDesign(design);
+    setShowDeleteModal(true);
+  };
+
+  const confirmDelete = async () => {
+    if (!deletingDesign || !publicKey) return;
+    if (typeof onDeleteDesign !== 'function') {
+      alert('Delete handler is not connected.');
       return;
     }
 
-    setMintingId(design.id);
+    setIsDeleting(true);
     try {
-      const mintResult = await onMintDesign({
-        name: design.name,
-        imageData: design.imageData,
-        strokeData: design.strokeData,
-        replaceMintAddress: design.mintAddress,
-      });
-      if (mintResult?.signature) {
-        setLastMintSignature(mintResult.signature);
+      const deleted = await onDeleteDesign(deletingDesign);
+      if (deleted?.signature) {
+        setLastMintSignature(deleted.signature);
       }
+
+      if (loadedDesignId === deletingDesign.id) {
+        setLoadedDesignId(null);
+        onDesignLoad?.(null);
+        painterRef.current?.clearDrawing?.();
+      }
+
       await refreshInventory();
+      setShowDeleteModal(false);
+      setDeletingDesign(null);
+
+      if (deleted?.cleanupError) {
+        alert(`Design burned on devnet, but backend file cleanup failed: ${deleted.cleanupError}`);
+      }
     } catch (err) {
-      alert(err instanceof Error ? err.message : 'Minting failed.');
+      alert(err instanceof Error ? err.message : 'Delete failed.');
     } finally {
-      setMintingId(null);
+      setIsDeleting(false);
     }
   };
 
@@ -162,9 +218,9 @@ export function MaskInventory({ painterRef, onDesignLoad, onMintDesign }) {
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
               </svg>
               {savePhase === 'submitting'
-                ? 'Submitting...'
+                ? saveMode === 'overwrite' ? 'Updating...' : 'Submitting...'
                 : savePhase === 'confirmed'
-                  ? 'Confirmed...'
+                  ? saveMode === 'overwrite' ? 'Updated...' : 'Confirmed...'
                   : savePhase === 'refreshing'
                     ? 'Refreshing...'
                     : 'Saving...'}
@@ -174,19 +230,27 @@ export function MaskInventory({ painterRef, onDesignLoad, onMintDesign }) {
               <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
               </svg>
-              Save Design
+              {loadedDesign ? 'Save Changes' : 'Save Design'}
             </>
           )}
         </button>
       </div>
 
+      {loadedDesign ? (
+        <div className="mb-4 rounded-lg inner-glow bg-[#111] px-3 py-2">
+          <p className="text-[11px] text-[#8b7355]">
+            Loaded design:&nbsp;<span className="text-[#d4af37]">{loadedDesign.name}</span>. Saving will overwrite this design.
+          </p>
+        </div>
+      ) : null}
+
       {isSaving ? (
         <div className="mb-4 rounded-lg inner-glow bg-[#d4af37]/5 px-3 py-2">
           <p className="text-[11px] text-[#8b7355] tracking-wide uppercase">
             {savePhase === 'submitting'
-              ? 'Transaction submitted to wallet...'
+              ? saveMode === 'overwrite' ? 'Updating loaded design...' : 'Transaction submitted to wallet...'
               : savePhase === 'confirmed'
-                ? 'Transaction confirmed on devnet...'
+                ? saveMode === 'overwrite' ? 'Loaded design updated...' : 'Transaction confirmed on devnet...'
                 : savePhase === 'refreshing'
                   ? 'Refreshing inventory...'
                   : 'Processing...'}
@@ -197,7 +261,7 @@ export function MaskInventory({ painterRef, onDesignLoad, onMintDesign }) {
       {lastMintSignature ? (
         <div className="mb-4 rounded-lg inner-glow bg-[#111] px-3 py-2">
           <p className="text-[11px] text-[#8b7355]">
-            Last mint confirmed.&nbsp;
+            Last transaction confirmed.&nbsp;
             <a
               href={`https://explorer.solana.com/tx/${lastMintSignature}?cluster=devnet`}
               target="_blank"
@@ -248,7 +312,7 @@ export function MaskInventory({ painterRef, onDesignLoad, onMintDesign }) {
             {designs.map((design) => (
               <div
                 key={design.id}
-                className="group bg-[#111] inner-glow hover:border-[#d4af37]/20 rounded-xl overflow-hidden transition-all duration-300"
+                className={`group bg-[#111] inner-glow rounded-xl overflow-hidden transition-all duration-300 ${loadedDesignId === design.id ? 'ring-1 ring-[#d4af37]/50' : 'hover:border-[#d4af37]/20'}`}
               >
                 {/* Thumbnail */}
                 <div className="aspect-square relative overflow-hidden bg-[#1a1a1a]">
@@ -282,22 +346,13 @@ export function MaskInventory({ painterRef, onDesignLoad, onMintDesign }) {
                     >
                       Load
                     </button>
-                    {!design.minted ? (
-                      <button
-                        onClick={() => handleMintDesign(design)}
-                        disabled={mintingId === design.id || !publicKey || isLoadingInventory}
-                        className="flex-1 px-2 py-1.5 text-[10px] font-light tracking-wider uppercase bg-[#d4af37]/10 hover:bg-[#d4af37]/20 text-[#d4af37] border border-[#d4af37]/30 rounded transition-colors disabled:opacity-50"
-                      >
-                        {mintingId === design.id ? '...' : 'Mint'}
-                      </button>
-                    ) : (
-                      <button
-                        disabled
-                        className="flex-1 px-2 py-1.5 text-[10px] font-light tracking-wider uppercase bg-[#1a1a1a] text-[#555] rounded cursor-default"
-                      >
-                        Minted
-                      </button>
-                    )}
+                    <button
+                      onClick={() => handleDeleteClick(design)}
+                      disabled={isDeleting}
+                      className="flex-1 px-2 py-1.5 text-[10px] font-light tracking-wider uppercase bg-red-500/10 hover:bg-red-500/20 text-red-300 border border-red-500/30 rounded transition-colors disabled:opacity-50"
+                    >
+                      Delete
+                    </button>
                     <a
                       href={`https://explorer.solana.com/address/${design.mintAddress}?cluster=devnet`}
                       target="_blank"
@@ -318,8 +373,14 @@ export function MaskInventory({ painterRef, onDesignLoad, onMintDesign }) {
       {showSaveModal && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-[#111] inner-glow rounded-2xl p-6 max-w-sm w-full">
-            <h3 className="text-white font-serif font-light text-lg mb-2 tracking-wide">Save Design</h3>
-            <p className="text-[#718096] text-sm font-light mb-4">Give your mask design a name</p>
+            <h3 className="text-white font-serif font-light text-lg mb-2 tracking-wide">
+              {saveMode === 'overwrite' ? 'Overwrite Design' : 'Save Design'}
+            </h3>
+            <p className="text-[#718096] text-sm font-light mb-4">
+              {saveMode === 'overwrite'
+                ? 'This will update the currently loaded design.'
+                : 'Give your mask design a name'}
+            </p>
             
             <input
               type="text"
@@ -343,12 +404,44 @@ export function MaskInventory({ painterRef, onDesignLoad, onMintDesign }) {
                 disabled={!designName.trim() || isSaving}
                 className="flex-1 px-4 py-2.5 btn-convex text-[#0a0a0a] text-sm font-light rounded-lg transition-all duration-300 disabled:opacity-50 hover:-translate-y-0.5"
               >
-                Save
+                {saveMode === 'overwrite' ? 'Overwrite' : 'Save'}
               </button>
             </div>
           </div>
         </div>
       )}
+
+      {showDeleteModal && deletingDesign ? (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-[#111] inner-glow rounded-2xl p-6 max-w-sm w-full">
+            <h3 className="text-white font-serif font-light text-lg mb-2 tracking-wide">Delete Design</h3>
+            <p className="text-[#718096] text-sm font-light mb-4">
+              This will burn <span className="text-[#d4af37]">{deletingDesign.name}</span> on devnet and remove backend assets if possible.
+            </p>
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => {
+                  if (isDeleting) return;
+                  setShowDeleteModal(false);
+                  setDeletingDesign(null);
+                }}
+                className="flex-1 px-4 py-2.5 text-sm font-light text-[#a0a0a0] hover:text-white transition-colors"
+                disabled={isDeleting}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmDelete}
+                disabled={isDeleting}
+                className="flex-1 px-4 py-2.5 rounded-lg text-sm font-light bg-red-500/20 border border-red-500/40 text-red-200 hover:bg-red-500/30 transition-all duration-300 disabled:opacity-50"
+              >
+                {isDeleting ? 'Deleting...' : 'Delete'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
