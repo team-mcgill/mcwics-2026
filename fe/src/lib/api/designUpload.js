@@ -1,4 +1,6 @@
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8000').replace(/\/$/, '')
+const TOKEN_TTL_MS = 55 * 60 * 1000
+const walletTokenCache = new Map()
 
 async function parseResponse(response) {
   if (response.ok) {
@@ -18,16 +20,45 @@ async function parseResponse(response) {
   throw new Error(detail)
 }
 
-async function authenticateWallet({ publicKey, signMessage }) {
+function getWalletAddress(publicKey) {
   if (!publicKey) {
     throw new Error('Please connect your wallet first.')
   }
 
+  if (typeof publicKey.toBase58 !== 'function') {
+    throw new Error('Invalid wallet connection state.')
+  }
+
+  return publicKey.toBase58()
+}
+
+function getCachedToken(wallet) {
+  const record = walletTokenCache.get(wallet)
+  if (!record) return ''
+  if (record.expiresAt <= Date.now()) {
+    walletTokenCache.delete(wallet)
+    return ''
+  }
+  return record.token
+}
+
+function setCachedToken(wallet, token) {
+  walletTokenCache.set(wallet, {
+    token,
+    expiresAt: Date.now() + TOKEN_TTL_MS,
+  })
+}
+
+function clearCachedToken(wallet) {
+  walletTokenCache.delete(wallet)
+}
+
+async function authenticateWallet({ publicKey, signMessage }) {
   if (typeof signMessage !== 'function') {
     throw new Error('Your wallet does not support signMessage. Please use Phantom sign message and try again.')
   }
 
-  const wallet = publicKey.toBase58()
+  const wallet = getWalletAddress(publicKey)
 
   const challenge = await parseResponse(
     await fetch(`${API_BASE_URL}/api/auth/challenge`, {
@@ -54,7 +85,40 @@ async function authenticateWallet({ publicKey, signMessage }) {
     })
   )
 
-  return verified.accessToken
+  const token = verified.accessToken
+  if (typeof token !== 'string' || !token.trim()) {
+    throw new Error('Wallet authentication failed.')
+  }
+
+  setCachedToken(wallet, token)
+  return token
+}
+
+async function postWithWalletAuth({ publicKey, signMessage, path, body }) {
+  const wallet = getWalletAddress(publicKey)
+
+  const request = (accessToken) => fetch(`${API_BASE_URL}${path}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify(body),
+  })
+
+  let accessToken = getCachedToken(wallet)
+  if (!accessToken) {
+    accessToken = await authenticateWallet({ publicKey, signMessage })
+  }
+
+  let response = await request(accessToken)
+  if (response.status === 401) {
+    clearCachedToken(wallet)
+    accessToken = await authenticateWallet({ publicKey, signMessage })
+    response = await request(accessToken)
+  }
+
+  return parseResponse(response)
 }
 
 export async function uploadDesignMetadataWithWalletAuth({
@@ -64,20 +128,12 @@ export async function uploadDesignMetadataWithWalletAuth({
   imageData,
   strokeData,
 }) {
-  const accessToken = await authenticateWallet({ publicKey, signMessage })
-
-  const uploaded = await parseResponse(
-    await fetch(`${API_BASE_URL}/api/designs/upload`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${accessToken}`,
-      },
-      body: JSON.stringify({ name, imageData, strokeData }),
-    })
-  )
-
-  return uploaded
+  return postWithWalletAuth({
+    publicKey,
+    signMessage,
+    path: '/api/designs/upload',
+    body: { name, imageData, strokeData },
+  })
 }
 
 export async function updateDesignMetadataWithWalletAuth({
@@ -88,18 +144,12 @@ export async function updateDesignMetadataWithWalletAuth({
   imageData,
   strokeData,
 }) {
-  const accessToken = await authenticateWallet({ publicKey, signMessage })
-
-  return parseResponse(
-    await fetch(`${API_BASE_URL}/api/designs/update`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${accessToken}`,
-      },
-      body: JSON.stringify({ metadataUri, name, imageData, strokeData }),
-    })
-  )
+  return postWithWalletAuth({
+    publicKey,
+    signMessage,
+    path: '/api/designs/update',
+    body: { metadataUri, name, imageData, strokeData },
+  })
 }
 
 export async function deleteDesignMetadataWithWalletAuth({
@@ -107,16 +157,10 @@ export async function deleteDesignMetadataWithWalletAuth({
   signMessage,
   metadataUri,
 }) {
-  const accessToken = await authenticateWallet({ publicKey, signMessage })
-
-  return parseResponse(
-    await fetch(`${API_BASE_URL}/api/designs/delete`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${accessToken}`,
-      },
-      body: JSON.stringify({ metadataUri }),
-    })
-  )
+  return postWithWalletAuth({
+    publicKey,
+    signMessage,
+    path: '/api/designs/delete',
+    body: { metadataUri },
+  })
 }

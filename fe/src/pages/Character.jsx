@@ -62,22 +62,20 @@ function Character() {
       sendTransaction,
     })
 
-    let cleanupError = ''
-    if (metadataUri) {
-      try {
-        await deleteDesignMetadataWithWalletAuth({
-          publicKey,
-          signMessage,
-          metadataUri,
-        })
-      } catch (error) {
-        cleanupError = error instanceof Error ? error.message : 'Failed to delete backend assets.'
-      }
-    }
+    const cleanupPromise = metadataUri
+      ? deleteDesignMetadataWithWalletAuth({
+        publicKey,
+        signMessage,
+        metadataUri,
+      })
+        .then(() => '')
+        .catch((error) => (error instanceof Error ? error.message : 'Failed to delete backend assets.'))
+      : Promise.resolve('')
 
     return {
       signature: burned.signature,
-      cleanupError,
+      waitForConfirmation: burned.waitForConfirmation,
+      cleanupPromise,
     }
   }, [connection, publicKey, sendTransaction, signMessage])
 

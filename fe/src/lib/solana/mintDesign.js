@@ -18,6 +18,23 @@ function getMetadataPda(mintAddress) {
   )[0]
 }
 
+async function confirmFinalized({ connection, signature, latestBlockhash }) {
+  const confirmation = await connection.confirmTransaction(
+    {
+      signature,
+      blockhash: latestBlockhash.blockhash,
+      lastValidBlockHeight: latestBlockhash.lastValidBlockHeight,
+    },
+    'finalized'
+  )
+
+  if (confirmation.value.err) {
+    throw new Error(`Mint transaction failed: ${JSON.stringify(confirmation.value.err)}`)
+  }
+
+  return confirmation
+}
+
 export async function mintMaskDesign({
   name,
   imageData,
@@ -25,6 +42,7 @@ export async function mintMaskDesign({
   connection,
   publicKey,
   sendTransaction,
+  awaitFinalization = false,
 }) {
   if (!publicKey) {
     throw new Error('Please connect your wallet first.')
@@ -105,17 +123,14 @@ export async function mintMaskDesign({
     preflightCommitment: 'confirmed',
   })
 
-  const confirmation = await connection.confirmTransaction(
-    {
-      signature,
-      blockhash: latestBlockhash.blockhash,
-      lastValidBlockHeight: latestBlockhash.lastValidBlockHeight,
-    },
-    'finalized'
-  )
+  const waitForConfirmation = () => confirmFinalized({
+    connection,
+    signature,
+    latestBlockhash,
+  })
 
-  if (confirmation.value.err) {
-    throw new Error(`Mint transaction failed: ${JSON.stringify(confirmation.value.err)}`)
+  if (awaitFinalization) {
+    await waitForConfirmation()
   }
 
   return {
@@ -123,5 +138,6 @@ export async function mintMaskDesign({
     mintAddress: mintAddress.toBase58(),
     name: normalizedName,
     imageData,
+    waitForConfirmation,
   }
 }

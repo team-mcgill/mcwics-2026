@@ -6,7 +6,30 @@ import {
   getAssociatedTokenAddressSync,
 } from '@solana/spl-token'
 
-export async function burnMaskDesign({ mintAddress, connection, publicKey, sendTransaction }) {
+async function confirmFinalized({ connection, signature, latestBlockhash }) {
+  const confirmation = await connection.confirmTransaction(
+    {
+      signature,
+      blockhash: latestBlockhash.blockhash,
+      lastValidBlockHeight: latestBlockhash.lastValidBlockHeight,
+    },
+    'finalized'
+  )
+
+  if (confirmation.value.err) {
+    throw new Error(`Burn transaction failed: ${JSON.stringify(confirmation.value.err)}`)
+  }
+
+  return confirmation
+}
+
+export async function burnMaskDesign({
+  mintAddress,
+  connection,
+  publicKey,
+  sendTransaction,
+  awaitFinalization = false,
+}) {
   if (!publicKey) {
     throw new Error('Please connect your wallet first.')
   }
@@ -44,21 +67,19 @@ export async function burnMaskDesign({ mintAddress, connection, publicKey, sendT
     preflightCommitment: 'confirmed',
   })
 
-  const confirmation = await connection.confirmTransaction(
-    {
-      signature,
-      blockhash: latestBlockhash.blockhash,
-      lastValidBlockHeight: latestBlockhash.lastValidBlockHeight,
-    },
-    'finalized'
-  )
+  const waitForConfirmation = () => confirmFinalized({
+    connection,
+    signature,
+    latestBlockhash,
+  })
 
-  if (confirmation.value.err) {
-    throw new Error(`Burn transaction failed: ${JSON.stringify(confirmation.value.err)}`)
+  if (awaitFinalization) {
+    await waitForConfirmation()
   }
 
   return {
     signature,
     mintAddress: mintPublicKey.toBase58(),
+    waitForConfirmation,
   }
 }
