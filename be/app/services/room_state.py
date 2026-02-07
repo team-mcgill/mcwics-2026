@@ -99,6 +99,27 @@ class RoomStateManager:
 
         return participant, recipients
 
+    async def update_cosmetic(
+        self,
+        *,
+        room_id: str,
+        player_id: str,
+        cosmetic_image_data: str | None,
+    ) -> tuple[RoomParticipant | None, list[WebSocket]]:
+        async with self._lock:
+            room = self._rooms.get(room_id)
+            if not room:
+                return None, []
+
+            participant = room.get(player_id)
+            if participant is None:
+                return None, []
+
+            participant.cosmetic_image_data = cosmetic_image_data
+            recipients = [entry.websocket for entry in room.values()]
+
+        return participant, recipients
+
     async def get_participant(self, *, room_id: str, player_id: str) -> RoomParticipant | None:
         async with self._lock:
             room = self._rooms.get(room_id)

@@ -1,14 +1,202 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { useWallet } from '@solana/wallet-adapter-react'
+import { useConnection, useWallet } from '@solana/wallet-adapter-react'
 import { RoomScene } from '../components/room/RoomScene'
 import { createRoomSocket } from '../lib/api/roomsSocket'
 import { getRoomById } from '../lib/rooms/rooms'
+import { FALLBACK_IMAGE, fetchWalletDesignInventory } from '../lib/solana/inventory'
 
 const EQUIPPED_MASK_STORAGE_KEY = 'masquerade:equipped-mask'
 const CHAT_BUBBLE_TTL_MS = 5000
 const MAX_CHAT_MESSAGES = 80
 const MOVE_SEND_INTERVAL_MS = 80
+const MASK_STROKE_RENDER_BASE_WIDTH = 640
+const MASK_STROKE_RENDER_SIZES = [1536, 1024, 768]
+const MAX_COSMETIC_IMAGE_DATA_SAFE_LENGTH = 2_800_000
+const MASK_STROKE_TARGET_FILL = 0.92
+const MASK_STROKE_AUTO_FIT_MAX_SCALE = 10
+const MASK_STROKE_ALPHA_THRESHOLD = 30
+const MASK_STROKE_WIDTH_BOOST = 1.45
+
+function percentileFromSorted(sortedValues, ratio) {
+  if (!sortedValues.length) return 0
+
+  const index = Math.max(0, Math.min(sortedValues.length - 1, Math.floor(ratio * (sortedValues.length - 1))))
+  return sortedValues[index]
+}
+
+function normalizeStrokeData(strokeData) {
+  if (!Array.isArray(strokeData)) return []
+
+  return strokeData
+    .map((stroke) => {
+      if (!stroke || typeof stroke !== 'object') return null
+      if (typeof stroke.color !== 'string' || !stroke.color.trim()) return null
+      if (!Number.isFinite(stroke.size)) return null
+      if (!Array.isArray(stroke.points)) return null
+
+      const points = stroke.points
+        .filter((point) => point && Number.isFinite(point.x) && Number.isFinite(point.y))
+        .map((point) => ({
+          x: Math.max(0, Math.min(1, Number(point.x))),
+          y: Math.max(0, Math.min(1, Number(point.y))),
+        }))
+
+      if (!points.length) return null
+
+      return {
+        color: stroke.color,
+        size: Math.max(1, Number(stroke.size)),
+        points,
+      }
+    })
+    .filter(Boolean)
+}
+
+function computeStrokeBounds(strokes) {
+  const xValues = []
+  const yValues = []
+
+  strokes.forEach((stroke) => {
+    const strokePadding = Math.max(1, stroke.size) / MASK_STROKE_RENDER_BASE_WIDTH / 2
+    stroke.points.forEach((point) => {
+      xValues.push(point.x - strokePadding, point.x + strokePadding)
+      yValues.push(point.y - strokePadding, point.y + strokePadding)
+    })
+  })
+
+  if (!xValues.length || !yValues.length) {
+    return null
+  }
+
+  const sortedX = [...xValues].sort((a, b) => a - b)
+  const sortedY = [...yValues].sort((a, b) => a - b)
+
+  const useRobustBounds = sortedX.length >= 48 && sortedY.length >= 48
+  const lowerRatio = useRobustBounds ? 0.06 : 0
+  const upperRatio = useRobustBounds ? 0.94 : 1
+
+  const minX = percentileFromSorted(sortedX, lowerRatio)
+  const maxX = percentileFromSorted(sortedX, upperRatio)
+  const minY = percentileFromSorted(sortedY, lowerRatio)
+  const maxY = percentileFromSorted(sortedY, upperRatio)
+
+  const width = Math.max(0, maxX - minX)
+  const height = Math.max(0, maxY - minY)
+
+  return {
+    width,
+    height,
+    centerX: (minX + maxX) / 2,
+    centerY: (minY + maxY) / 2,
+  }
+}
+
+function cleanupLowAlphaPixels(ctx, textureSize) {
+  const imageData = ctx.getImageData(0, 0, textureSize, textureSize)
+  const pixels = imageData.data
+
+  for (let i = 0; i < pixels.length; i += 4) {
+    const alpha = pixels[i + 3]
+    if (alpha <= MASK_STROKE_ALPHA_THRESHOLD) {
+      pixels[i] = 0
+      pixels[i + 1] = 0
+      pixels[i + 2] = 0
+      pixels[i + 3] = 0
+    }
+  }
+
+  ctx.putImageData(imageData, 0, 0)
+}
+
+function renderStrokeDataToImageDataUrl(strokeData, textureSize) {
+  const normalizedStrokes = normalizeStrokeData(strokeData)
+  if (!normalizedStrokes.length) return ''
+
+  const canvas = document.createElement('canvas')
+  canvas.width = textureSize
+  canvas.height = textureSize
+
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return ''
+
+  ctx.clearRect(0, 0, textureSize, textureSize)
+  ctx.lineCap = 'round'
+  ctx.lineJoin = 'round'
+
+  const widthScale = textureSize / MASK_STROKE_RENDER_BASE_WIDTH
+  const bounds = computeStrokeBounds(normalizedStrokes)
+
+  let scaleToFill = 1
+  let centerX = 0.5
+  let centerY = 0.5
+
+  if (bounds && bounds.width > 0.0001 && bounds.height > 0.0001) {
+    const fitScale = Math.min(
+      MASK_STROKE_TARGET_FILL / bounds.width,
+      MASK_STROKE_TARGET_FILL / bounds.height
+    )
+
+    scaleToFill = Math.min(MASK_STROKE_AUTO_FIT_MAX_SCALE, Math.max(1, fitScale))
+    centerX = bounds.centerX
+    centerY = bounds.centerY
+  }
+
+  const toTextureX = (x) => ((x - centerX) * scaleToFill + 0.5) * textureSize
+  const toTextureY = (y) => ((y - centerY) * scaleToFill + 0.5) * textureSize
+
+  normalizedStrokes.forEach((stroke) => {
+    const points = stroke.points
+    const lineWidth = Math.min(textureSize * 0.24, Math.max(1, stroke.size * widthScale * scaleToFill * MASK_STROKE_WIDTH_BOOST))
+
+    if (points.length === 1) {
+      ctx.beginPath()
+      ctx.fillStyle = stroke.color
+      ctx.arc(toTextureX(points[0].x), toTextureY(points[0].y), lineWidth / 2, 0, Math.PI * 2)
+      ctx.fill()
+      return
+    }
+
+    ctx.beginPath()
+    ctx.strokeStyle = stroke.color
+    ctx.lineWidth = lineWidth
+    ctx.moveTo(toTextureX(points[0].x), toTextureY(points[0].y))
+
+    for (let i = 1; i < points.length; i += 1) {
+      ctx.lineTo(toTextureX(points[i].x), toTextureY(points[i].y))
+    }
+
+    ctx.stroke()
+  })
+
+  cleanupLowAlphaPixels(ctx, textureSize)
+
+  return canvas.toDataURL('image/png')
+}
+
+function resolveEquippedMaskImageData(mask) {
+  if (!mask || typeof mask !== 'object') return ''
+
+  const strokeData = normalizeStrokeData(mask.strokeData)
+  if (strokeData.length) {
+    for (const textureSize of MASK_STROKE_RENDER_SIZES) {
+      const rendered = renderStrokeDataToImageDataUrl(strokeData, textureSize)
+      if (rendered && rendered.length <= MAX_COSMETIC_IMAGE_DATA_SAFE_LENGTH) {
+        return rendered
+      }
+    }
+  }
+
+  if (typeof mask.paintData === 'string' && mask.paintData) {
+    return mask.paintData
+  }
+
+  if (typeof mask.imageData === 'string' && mask.imageData) {
+    return mask.imageData
+  }
+
+  return ''
+}
 
 function getShortWalletLabel(publicKey) {
   if (!publicKey || typeof publicKey.toBase58 !== 'function') {
@@ -29,11 +217,32 @@ function loadEquippedMask() {
 
     return {
       imageData: typeof parsed.imageData === 'string' ? parsed.imageData : '',
+      paintData: typeof parsed.paintData === 'string' ? parsed.paintData : '',
+      strokeData: normalizeStrokeData(parsed.strokeData),
       name: typeof parsed.name === 'string' ? parsed.name : '',
       mintAddress: typeof parsed.mintAddress === 'string' ? parsed.mintAddress : '',
     }
   } catch {
     return null
+  }
+}
+
+function persistEquippedMask(mask) {
+  try {
+    if (!mask) {
+      window.localStorage.removeItem(EQUIPPED_MASK_STORAGE_KEY)
+      return
+    }
+
+    window.localStorage.setItem(EQUIPPED_MASK_STORAGE_KEY, JSON.stringify({
+      imageData: typeof mask.imageData === 'string' ? mask.imageData : '',
+      paintData: typeof mask.paintData === 'string' ? mask.paintData : '',
+      strokeData: normalizeStrokeData(mask.strokeData),
+      name: typeof mask.name === 'string' ? mask.name : '',
+      mintAddress: typeof mask.mintAddress === 'string' ? mask.mintAddress : '',
+    }))
+  } catch {
+    // Ignore storage write failures.
   }
 }
 
@@ -62,9 +271,10 @@ function Room() {
   const room = useMemo(() => getRoomById(roomId), [roomId])
 
   const { publicKey } = useWallet()
+  const { connection } = useConnection()
   const displayName = useMemo(() => getShortWalletLabel(publicKey), [publicKey])
   const walletAddress = useMemo(() => (publicKey ? publicKey.toBase58() : ''), [publicKey])
-  const equippedMask = useMemo(() => loadEquippedMask(), [])
+  const [equippedMask, setEquippedMask] = useState(() => loadEquippedMask())
 
   const [connectionStatus, setConnectionStatus] = useState('connecting')
   const [connectionError, setConnectionError] = useState('')
@@ -72,10 +282,20 @@ function Room() {
   const [playersById, setPlayersById] = useState({})
   const [messages, setMessages] = useState([])
   const [chatInput, setChatInput] = useState('')
+  const [isChangingMask, setIsChangingMask] = useState(false)
+  const [availableMasks, setAvailableMasks] = useState([])
+  const [isLoadingMasks, setIsLoadingMasks] = useState(false)
+  const [maskLoadError, setMaskLoadError] = useState('')
+  const [maskEquipError, setMaskEquipError] = useState('')
 
   const socketRef = useRef(null)
   const moveSentAtRef = useRef(0)
   const chatInputRef = useRef(null)
+  const equippedMaskRef = useRef(equippedMask)
+
+  useEffect(() => {
+    equippedMaskRef.current = equippedMask
+  }, [equippedMask])
 
   const handleSocketMessage = useCallback((payload) => {
     if (!payload || typeof payload !== 'object') return
@@ -135,6 +355,35 @@ function Room() {
       return
     }
 
+    if (payload.type === 'player_cosmetic_updated' && typeof payload.playerId === 'string') {
+      setPlayersById((prev) => {
+        const current = prev[payload.playerId]
+        if (!current) return prev
+
+        return {
+          ...prev,
+          [payload.playerId]: {
+            ...current,
+            cosmeticImageData: typeof payload.cosmeticImageData === 'string' ? payload.cosmeticImageData : '',
+          },
+        }
+      })
+      return
+    }
+
+    if (payload.type === 'set_cosmetic_ack') {
+      if (payload.accepted) {
+        setMaskEquipError('')
+      } else {
+        setMaskEquipError(
+          typeof payload.reason === 'string' && payload.reason.trim()
+            ? payload.reason
+            : 'Could not equip this mask right now.'
+        )
+      }
+      return
+    }
+
     if (payload.type === 'player_left' && typeof payload.playerId === 'string') {
       setPlayersById((prev) => {
         if (!prev[payload.playerId]) return prev
@@ -181,6 +430,7 @@ function Room() {
 
     setConnectionStatus('connecting')
     setConnectionError('')
+    setMaskEquipError('')
     setLocalPlayerId('')
     setPlayersById({})
     setMessages([])
@@ -208,10 +458,11 @@ function Room() {
     socket.connect()
       .then(() => {
         if (cancelled) return
+        const initialCosmeticImageData = resolveEquippedMaskImageData(equippedMaskRef.current)
         socket.sendJoin({
           name: displayName,
           wallet: walletAddress,
-          cosmeticImageData: equippedMask?.imageData || '',
+          cosmeticImageData: initialCosmeticImageData,
           position: { x: 0, y: 0, z: 0 },
           rotationY: 0,
         })
@@ -227,7 +478,80 @@ function Room() {
       socket.close()
       socketRef.current = null
     }
-  }, [displayName, equippedMask?.imageData, handleSocketMessage, room, walletAddress])
+  }, [displayName, handleSocketMessage, room, walletAddress])
+
+  const refreshRoomMasks = useCallback(async () => {
+    if (!publicKey) {
+      setAvailableMasks([])
+      setMaskLoadError('')
+      return
+    }
+
+    setIsLoadingMasks(true)
+    setMaskLoadError('')
+
+    try {
+      const nextMasks = await fetchWalletDesignInventory(connection, publicKey)
+      setAvailableMasks(nextMasks)
+    } catch {
+      setMaskLoadError('Failed to load masks from devnet.')
+      setAvailableMasks([])
+    } finally {
+      setIsLoadingMasks(false)
+    }
+  }, [connection, publicKey])
+
+  useEffect(() => {
+    if (!isChangingMask) return
+    void refreshRoomMasks()
+  }, [isChangingMask, refreshRoomMasks])
+
+  const applyEquippedMask = useCallback((mask) => {
+    const maskImageData = resolveEquippedMaskImageData(mask)
+    if (mask && !maskImageData) {
+      setMaskEquipError('Selected mask does not have usable texture data.')
+      return
+    }
+
+    const nextMask = mask
+      ? {
+        imageData: maskImageData,
+        paintData: typeof mask.paintData === 'string' ? mask.paintData : '',
+        strokeData: normalizeStrokeData(mask.strokeData),
+        name: typeof mask.name === 'string' ? mask.name : '',
+        mintAddress: typeof mask.mintAddress === 'string' ? mask.mintAddress : '',
+      }
+      : null
+
+    setEquippedMask(nextMask)
+    persistEquippedMask(nextMask)
+    setMaskEquipError('')
+
+    if (localPlayerId) {
+      setPlayersById((prev) => {
+        const current = prev[localPlayerId]
+        if (!current) return prev
+
+        return {
+          ...prev,
+          [localPlayerId]: {
+            ...current,
+            cosmeticImageData: nextMask?.imageData || '',
+          },
+        }
+      })
+    }
+
+    const sent = socketRef.current?.sendSetCosmetic({
+      cosmeticImageData: nextMask?.imageData || '',
+    }) === true
+
+    if (!sent) {
+      setMaskEquipError('Socket is not open; mask update was not sent.')
+    }
+
+    setIsChangingMask(false)
+  }, [localPlayerId])
 
   const handleLocalMove = useCallback(({ position, rotationY }) => {
     const now = Date.now()
@@ -293,9 +617,16 @@ function Room() {
             </p>
           </div>
 
-          <div className="text-right">
+          <div className="text-right flex flex-col items-end gap-2">
+            <button
+              type="button"
+              onClick={() => setIsChangingMask(true)}
+              className="px-3 py-1.5 rounded-lg border border-[#d4af37]/30 text-[#d4af37] text-[11px] tracking-widest uppercase hover:bg-[#d4af37]/10"
+            >
+              Change Room
+            </button>
             <p className="text-[11px] font-light tracking-widest uppercase text-[#8b7355]">Status</p>
-            <p className="text-xs font-light text-white/70 mt-1">{connectionStatus}</p>
+            <p className="text-xs font-light text-white/70 -mt-1">{connectionStatus}</p>
           </div>
         </div>
 
@@ -335,7 +666,98 @@ function Room() {
           {connectionError && (
             <p className="mt-2 text-xs font-light text-red-400">{connectionError}</p>
           )}
+
+          {maskEquipError && (
+            <p className="mt-2 text-xs font-light text-red-300">{maskEquipError}</p>
+          )}
         </div>
+
+        {isChangingMask && (
+          <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="w-full max-w-2xl rounded-2xl bg-[#111] inner-glow p-5 md:p-6">
+              <div className="flex items-start justify-between gap-4 mb-4">
+                <div>
+                  <h2 className="text-lg md:text-xl font-serif font-light text-white tracking-wide">Changing Room</h2>
+                  <p className="text-xs text-[#718096] mt-1">
+                    {equippedMask?.name ? `Equipped: ${equippedMask.name}` : 'No mask equipped'}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsChangingMask(false)}
+                  className="text-xs tracking-widest uppercase text-[#a0a0a0] hover:text-white"
+                >
+                  Close
+                </button>
+              </div>
+
+              {!publicKey ? (
+                <p className="text-sm text-[#718096]">Connect your wallet to load masks.</p>
+              ) : isLoadingMasks ? (
+                <p className="text-sm text-[#718096]">Loading masks...</p>
+              ) : (
+                <>
+                  <div className="flex items-center gap-3 mb-4">
+                    <button
+                      type="button"
+                      onClick={() => applyEquippedMask(null)}
+                      className="px-3 py-1.5 rounded-lg border border-red-400/30 text-red-300 text-[11px] tracking-widest uppercase hover:bg-red-500/10"
+                    >
+                      Unequip
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void refreshRoomMasks()}
+                      className="px-3 py-1.5 rounded-lg border border-white/20 text-white/80 text-[11px] tracking-widest uppercase hover:bg-white/5"
+                    >
+                      Refresh
+                    </button>
+                  </div>
+
+                  {maskLoadError && (
+                    <p className="text-xs text-red-300 mb-3">{maskLoadError}</p>
+                  )}
+
+                  {availableMasks.length === 0 ? (
+                    <p className="text-sm text-[#718096]">No masks found in your devnet inventory.</p>
+                  ) : (
+                    <div className="max-h-[56vh] overflow-y-auto grid grid-cols-2 md:grid-cols-3 gap-3">
+                      {availableMasks.map((mask) => {
+                        const isEquipped = Boolean(equippedMask?.mintAddress) && equippedMask.mintAddress === mask.mintAddress
+
+                        return (
+                          <button
+                            key={mask.id}
+                            type="button"
+                            onClick={() => applyEquippedMask(mask)}
+                            className={`text-left rounded-xl overflow-hidden border transition-colors ${isEquipped ? 'border-[#d4af37]/70' : 'border-white/10 hover:border-[#d4af37]/30'}`}
+                          >
+                            <div className="aspect-square bg-[#1a1a1a]">
+                              <img
+                                src={mask.imageData || FALLBACK_IMAGE}
+                                alt={mask.name || 'Mask'}
+                                onError={(event) => {
+                                  event.currentTarget.src = FALLBACK_IMAGE
+                                }}
+                                className="w-full h-full object-cover"
+                              />
+                            </div>
+                            <div className="px-2.5 py-2">
+                              <p className="text-xs text-white truncate">{mask.name || 'Untitled mask'}</p>
+                              <p className="text-[10px] text-[#8b7355] mt-1 tracking-widest uppercase">
+                                {isEquipped ? 'Equipped' : 'Equip'}
+                              </p>
+                            </div>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )

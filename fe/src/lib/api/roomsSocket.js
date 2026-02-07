@@ -74,6 +74,10 @@ export function createRoomSocket({ roomId, onMessage, onOpen, onClose, onError }
       type: 'chat',
       text,
     }),
+    sendSetCosmetic: ({ cosmeticImageData }) => send({
+      type: 'set_cosmetic',
+      cosmeticImageData,
+    }),
     close: () => {
       if (socket && socket.readyState <= WebSocket.OPEN) {
         socket.close()

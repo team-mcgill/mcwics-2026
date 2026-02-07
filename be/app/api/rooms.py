@@ -51,17 +51,31 @@ def _sanitize_wallet(value: object) -> str | None:
 
 
 def _sanitize_cosmetic_image_data(value: object) -> str | None:
+    accepted, cleaned, _, _ = _parse_cosmetic_image_data(value)
+    return cleaned if accepted else None
+
+
+def _parse_cosmetic_image_data(value: object) -> tuple[bool, str | None, str, str]:
+    if value is None:
+        return True, None, "empty", ""
+
     if not isinstance(value, str):
-        return None
+        return False, None, "invalid_type", "Cosmetic must be a string."
 
     cleaned = value.strip()
-    if not cleaned or len(cleaned) > MAX_COSMETIC_IMAGE_DATA_LENGTH:
-        return None
+    if not cleaned:
+        return True, None, "empty", ""
 
-    if not cleaned.startswith("data:image"):
-        return None
+    if len(cleaned) > MAX_COSMETIC_IMAGE_DATA_LENGTH:
+        return False, None, "too_large", "Cosmetic payload is too large."
 
-    return cleaned
+    if cleaned.startswith("data:image"):
+        return True, cleaned, "data_url", ""
+
+    if cleaned.startswith("http://") or cleaned.startswith("https://"):
+        return True, cleaned, "http_url", ""
+
+    return False, None, "unsupported_format", "Use data:image or http(s) image URL."
 
 
 def _parse_position(value: object) -> dict[str, float]:
@@ -162,6 +176,61 @@ async def room_socket(websocket: WebSocket, room_id: str) -> None:
                         "playerId": player_id,
                         "position": updated.position,
                         "rotationY": updated.rotation_y,
+                    },
+                )
+                continue
+
+            if message_type == "set_cosmetic":
+                accepted, cosmetic_image_data, cosmetic_kind, reason = _parse_cosmetic_image_data(
+                    message.get("cosmeticImageData")
+                )
+                if not accepted:
+                    await _send_json_safe(
+                        websocket,
+                        {
+                            "type": "set_cosmetic_ack",
+                            "accepted": False,
+                            "reason": reason,
+                            "kind": cosmetic_kind,
+                        },
+                    )
+                    continue
+
+                updated, recipients = await room_state_manager.update_cosmetic(
+                    room_id=normalized_room_id,
+                    player_id=player_id,
+                    cosmetic_image_data=cosmetic_image_data,
+                )
+
+                if updated is None:
+                    await _send_json_safe(
+                        websocket,
+                        {
+                            "type": "set_cosmetic_ack",
+                            "accepted": False,
+                            "reason": "Player was not found in room.",
+                            "kind": cosmetic_kind,
+                        },
+                    )
+                    continue
+
+                await _send_json_safe(
+                    websocket,
+                    {
+                        "type": "set_cosmetic_ack",
+                        "accepted": True,
+                        "reason": "",
+                        "kind": cosmetic_kind,
+                        "length": len(cosmetic_image_data or ""),
+                    },
+                )
+
+                await _broadcast_json(
+                    recipients,
+                    {
+                        "type": "player_cosmetic_updated",
+                        "playerId": player_id,
+                        "cosmeticImageData": updated.cosmetic_image_data,
                     },
                 )
                 continue

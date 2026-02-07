@@ -7,12 +7,20 @@ const MOVE_ACCELERATION = 18
 const MOVE_DECELERATION = 14
 const TURN_SMOOTHING = 14
 const CAMERA_FOLLOW_STIFFNESS = 8
-const CAMERA_DISTANCE = 6.6
-const CAMERA_LOOK_DISTANCE = 7.0
-const CAMERA_PIVOT_HEIGHT = 1.45
+const CAMERA_DISTANCE = 5.7
+const CAMERA_LOOK_DISTANCE = 6.8
+const CAMERA_PIVOT_HEIGHT = 1.78
 const CAMERA_PITCH_MIN = -1.2
 const CAMERA_PITCH_MAX = -0.02
 const MOUSE_LOOK_SENSITIVITY = 0.006
+const AVATAR_BODY_TOP_RADIUS = 0.35
+const AVATAR_BODY_BOTTOM_RADIUS = 0.42
+const AVATAR_BODY_HEIGHT = 1.24
+const AVATAR_BODY_CENTER_Y = 0.9
+const AVATAR_HEAD_RADIUS = 0.43
+const AVATAR_HEAD_CENTER_Y = 2.0
+const AVATAR_NAME_LABEL_Y = 3.05
+const AVATAR_CHAT_LABEL_Y = 3.58
 const MOVEMENT_CODE_TO_DIRECTION = {
   KeyW: 'forward',
   KeyA: 'left',
@@ -109,20 +117,20 @@ function createTextSprite(text, style) {
 function createFallbackAvatar() {
   const group = new THREE.Group()
   const body = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.28, 0.32, 1.1, 20),
+    new THREE.CylinderGeometry(AVATAR_BODY_TOP_RADIUS, AVATAR_BODY_BOTTOM_RADIUS, AVATAR_BODY_HEIGHT, 20),
     new THREE.MeshStandardMaterial({ color: '#d9d2c3', roughness: 0.45, metalness: 0.08 })
   )
-  body.position.y = 0.8
+  body.position.y = AVATAR_BODY_CENTER_Y
   body.castShadow = true
   body.receiveShadow = true
   group.add(body)
 
   const head = new THREE.Mesh(
-    new THREE.SphereGeometry(0.28, 20, 20),
+    new THREE.SphereGeometry(AVATAR_HEAD_RADIUS, 22, 22),
     new THREE.MeshStandardMaterial({ color: '#efe8d8', roughness: 0.5, metalness: 0.05 })
   )
   head.name = 'head'
-  head.position.y = 1.78
+  head.position.y = AVATAR_HEAD_CENTER_Y
   head.castShadow = true
   group.add(head)
   return group
@@ -138,25 +146,87 @@ function findHeadAnchor(root) {
   return head
 }
 
+function createDiagnosticMaskTexture() {
+  const canvas = document.createElement('canvas')
+  canvas.width = 128
+  canvas.height = 128
+
+  const ctx = canvas.getContext('2d')
+  ctx.fillStyle = '#ff00ff'
+  ctx.fillRect(0, 0, 128, 128)
+  ctx.fillStyle = '#111111'
+  for (let i = 0; i < 8; i += 1) {
+    const x = i * 16
+    ctx.fillRect(x, 0, 8, 128)
+  }
+
+  const texture = new THREE.CanvasTexture(canvas)
+  texture.colorSpace = THREE.SRGBColorSpace
+  texture.needsUpdate = true
+  return texture
+}
+
 function createCosmeticOverlay(imageData) {
   if (!imageData || typeof imageData !== 'string') return null
 
-  const texture = new THREE.TextureLoader().load(imageData)
-  texture.colorSpace = THREE.SRGBColorSpace
+  const geometry = new THREE.SphereGeometry(
+    AVATAR_HEAD_RADIUS * 1.1,
+    36,
+    28,
+    (Math.PI / 2) - 1.09,
+    2.18,
+    Math.PI * 0.16,
+    Math.PI * 0.68
+  )
+  const material = new THREE.MeshStandardMaterial({
+    color: '#f2eee5',
+    transparent: true,
+    opacity: 0.98,
+    alphaTest: 0.18,
+    side: THREE.DoubleSide,
+    roughness: 0.56,
+    metalness: 0.04,
+    emissive: '#101010',
+    emissiveIntensity: 0.12,
+    depthWrite: false,
+    polygonOffset: true,
+    polygonOffsetFactor: -1,
+    polygonOffsetUnits: -1,
+  })
 
   const mesh = new THREE.Mesh(
-    new THREE.PlaneGeometry(0.6, 0.6),
-    new THREE.MeshBasicMaterial({
-      map: texture,
-      transparent: true,
-      opacity: 0.92,
-      side: THREE.DoubleSide,
-      depthWrite: false,
-    })
+    geometry,
+    material
+  )
+
+  const loader = new THREE.TextureLoader()
+  loader.load(
+    imageData,
+    (texture) => {
+      texture.colorSpace = THREE.SRGBColorSpace
+      texture.minFilter = THREE.LinearMipmapLinearFilter
+      texture.magFilter = THREE.LinearFilter
+      texture.anisotropy = 16
+      texture.generateMipmaps = true
+      texture.needsUpdate = true
+      material.map = texture
+      material.color.set('#ffffff')
+      material.opacity = 0.98
+      material.needsUpdate = true
+    },
+    undefined,
+    () => {
+      material.map?.dispose?.()
+      material.map = createDiagnosticMaskTexture()
+      material.color.set('#ffffff')
+      material.opacity = 1
+      material.needsUpdate = true
+      console.warn('Failed to load room cosmetic texture; using diagnostic mask fallback.')
+    }
   )
 
   mesh.renderOrder = 5
-  mesh.position.set(0, 0.03, 0.18)
+  mesh.position.set(0, 0.012, 0.022)
   return mesh
 }
 
@@ -295,7 +365,7 @@ export function RoomScene({ playersById, localPlayerId, onLocalMove }) {
         background: 'rgba(16, 16, 16, 0.88)',
         color: '#f5f5dc',
       })
-      nameSprite.position.set(0, 2.45, 0)
+      nameSprite.position.set(0, AVATAR_NAME_LABEL_Y, 0)
       group.add(nameSprite)
 
       const chatSprite = createTextSprite('', {
@@ -303,7 +373,7 @@ export function RoomScene({ playersById, localPlayerId, onLocalMove }) {
         color: '#0a0a0a',
       })
       chatSprite.visible = false
-      chatSprite.position.set(0, 2.95, 0)
+      chatSprite.position.set(0, AVATAR_CHAT_LABEL_Y, 0)
       group.add(chatSprite)
 
       let cosmeticOverlay = null
@@ -340,9 +410,7 @@ export function RoomScene({ playersById, localPlayerId, onLocalMove }) {
       avatar.chatSprite.material.dispose?.()
 
       if (avatar.cosmeticOverlay) {
-        avatar.cosmeticOverlay.material.map?.dispose()
-        avatar.cosmeticOverlay.material.dispose?.()
-        avatar.cosmeticOverlay.geometry.dispose?.()
+        disposeObject3D(avatar.cosmeticOverlay)
       }
 
       scene.remove(avatar.group)
@@ -373,9 +441,7 @@ export function RoomScene({ playersById, localPlayerId, onLocalMove }) {
 
         if (player.cosmeticImageData !== avatar.cosmeticKey) {
           if (avatar.cosmeticOverlay) {
-            avatar.cosmeticOverlay.material.map?.dispose()
-            avatar.cosmeticOverlay.material.dispose?.()
-            avatar.cosmeticOverlay.geometry.dispose?.()
+            disposeObject3D(avatar.cosmeticOverlay)
             avatar.cosmeticOverlay.removeFromParent()
             avatar.cosmeticOverlay = null
             avatar.cosmeticKey = ''
