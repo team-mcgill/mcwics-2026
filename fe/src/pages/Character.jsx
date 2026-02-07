@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useConnection, useWallet } from '@solana/wallet-adapter-react'
 import { FaceMeshPainter } from '../components/FaceMeshPainter'
 import { MaskInventory } from '../components/MaskInventory'
@@ -12,6 +12,7 @@ import { mintMaskDesign } from '../lib/solana/mintDesign'
 
 function Character() {
   const painterRef = useRef(null)
+  const hasPersistedEquipRef = useRef(false)
   const [activeDesign, setActiveDesign] = useState(null)
   const { connection } = useConnection()
   const { publicKey, sendTransaction, signMessage } = useWallet()
@@ -78,6 +79,25 @@ function Character() {
       cleanupPromise,
     }
   }, [connection, publicKey, sendTransaction, signMessage])
+
+  useEffect(() => {
+    if (!activeDesign) {
+      if (hasPersistedEquipRef.current) {
+        window.localStorage.removeItem('masquerade:equipped-mask')
+      }
+      return
+    }
+
+    const payload = {
+      id: activeDesign.id,
+      name: activeDesign.name,
+      mintAddress: activeDesign.mintAddress,
+      imageData: activeDesign.paintData || activeDesign.imageData || '',
+    }
+
+    window.localStorage.setItem('masquerade:equipped-mask', JSON.stringify(payload))
+    hasPersistedEquipRef.current = true
+  }, [activeDesign])
 
   return (
     <div className="min-h-screen bg-[#0a0a0a] pt-28 pb-8">

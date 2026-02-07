@@ -1,30 +1,13 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
-
-const ROOMS = [
-  { id: 1, name: 'The Grand Ballroom', topic: 'Music', players: 24, maxPlayers: 50, image: '🎭' },
-  { id: 2, name: 'Garden of Whispers', topic: 'Romance', players: 12, maxPlayers: 30, image: '🌹' },
-  { id: 3, name: 'Midnight Gallery', topic: 'Art', players: 8, maxPlayers: 20, image: '🎨' },
-  { id: 4, name: 'Shadow Theater', topic: 'Mystery', players: 18, maxPlayers: 40, image: '🎪' },
-  { id: 5, name: 'Crystal Palace', topic: 'Fashion', players: 31, maxPlayers: 60, image: '💎' },
-  { id: 6, name: 'Velvet Lounge', topic: 'Poetry', players: 6, maxPlayers: 25, image: '📜' },
-]
-
-const TOPICS = [
-  { name: 'Music', icon: '🎵', count: 124 },
-  { name: 'Art', icon: '🎨', count: 89 },
-  { name: 'Romance', icon: '💫', count: 67 },
-  { name: 'Mystery', icon: '🔮', count: 45 },
-  { name: 'Fashion', icon: '👑', count: 156 },
-  { name: 'Poetry', icon: '✨', count: 34 },
-]
+import { ROOMS, TOPICS } from '../lib/rooms/rooms'
 
 function RoomCard({ room }) {
   const occupancyPercent = (room.players / room.maxPlayers) * 100
   const isNearlyFull = occupancyPercent > 80
 
   return (
-    <div className="group relative bg-[#111] rounded-2xl overflow-hidden hover-lift cursor-pointer inner-glow">
+    <Link to={`/rooms/${room.id}`} className="group relative bg-[#111] rounded-2xl overflow-hidden hover-lift cursor-pointer inner-glow block">
       <div className="absolute inset-0 bg-gradient-to-br from-[#d4af37]/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
 
       <div className="relative p-6">
@@ -60,11 +43,11 @@ function RoomCard({ room }) {
       </div>
 
       <div className="relative px-6 pb-6">
-        <button className="w-full py-3 rounded-lg text-[#0a0a0a] font-light text-sm tracking-wider uppercase btn-convex transition-all duration-300">
+        <div className="w-full py-3 rounded-lg text-[#0a0a0a] font-light text-sm tracking-wider uppercase btn-convex transition-all duration-300 text-center">
           Enter Room
-        </button>
+        </div>
       </div>
-    </div>
+    </Link>
   )
 }
 

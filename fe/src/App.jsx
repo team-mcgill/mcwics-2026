@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import Home from './pages/Home'
 import Store from './pages/Store'
 import Character from './pages/Character'
+import Room from './pages/Room'
 import NotFound from './pages/NotFound'
 
 function MasqueradeLogo() {
@@ -62,7 +63,12 @@ function HamburgerIcon({ isOpen }) {
 function Navigation() {
   const location = useLocation()
   const [isMenuOpen, setIsMenuOpen] = useState(false)
-  const isActive = (path) => location.pathname === path
+  const isActive = (path) => {
+    if (path === '/') {
+      return location.pathname === '/' || location.pathname.startsWith('/rooms/')
+    }
+    return location.pathname === path
+  }
 
   useEffect(() => {
     setIsMenuOpen(false)
@@ -142,6 +148,7 @@ function App() {
       <div>
         <Routes>
           <Route path="/" element={<Home />} />
+          <Route path="/rooms/:roomId" element={<Room />} />
           <Route path="/store" element={<Store />} />
           <Route path="/character" element={<Character />} />
           <Route path="*" element={<NotFound />} />
