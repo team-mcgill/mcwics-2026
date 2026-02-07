@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, Link, useLocation } from 'react-router-dom'
 import Home from './pages/Home'
 import About from './pages/About'
+import Character from './pages/Character'
 import NotFound from './pages/NotFound'
 
 function Navigation() {
@@ -28,6 +29,12 @@ function Navigation() {
             >
               About
             </Link>
+            <Link 
+              to="/character" 
+              className={`transition-colors ${isActive('/character') ? 'text-blue-400' : 'text-slate-300 hover:text-white'}`}
+            >
+              Character
+            </Link>
           </div>
         </div>
       </div>
@@ -42,6 +49,7 @@ function App() {
       <Routes>
         <Route path="/" element={<Home />} />
         <Route path="/about" element={<About />} />
+        <Route path="/character" element={<Character />} />
         <Route path="*" element={<NotFound />} />
       </Routes>
     </BrowserRouter>
