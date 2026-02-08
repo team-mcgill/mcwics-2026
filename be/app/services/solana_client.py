@@ -1,5 +1,12 @@
+import asyncio
+
 from solana.rpc.async_api import AsyncClient
 from solders.signature import Signature
+
+
+TX_FETCH_MAX_WAIT_SECONDS = 30.0
+TX_FETCH_INITIAL_DELAY_SECONDS = 0.75
+TX_FETCH_MAX_DELAY_SECONDS = 3.0
 
 
 async def get_current_slot(rpc_url: str) -> int:
@@ -41,26 +48,56 @@ async def verify_transaction(
             raise ValueError(f"Invalid signature format: {exc}")
 
         print(f"[VERIFY] Fetching transaction from RPC...", flush=True)
-        
-        # Retry logic: wait for transaction to be indexed
-        import asyncio
-        max_retries = 10
-        retry_delay = 0.5  # seconds
+
+        # Retry logic: allow enough time for propagation/indexing on RPC.
+        elapsed = 0.0
+        retry_delay = TX_FETCH_INITIAL_DELAY_SECONDS
+        attempts = 0
         response = None
-        
-        for attempt in range(max_retries):
+
+        while elapsed < TX_FETCH_MAX_WAIT_SECONDS:
+            attempts += 1
             response = await client.get_transaction(
                 sig,
+                commitment="confirmed",
                 max_supported_transaction_version=0,
             )
             if response and response.value:
-                print(f"[VERIFY] Transaction found after {attempt + 1} attempts", flush=True)
+                print(f"[VERIFY] Transaction found after {attempts} attempts", flush=True)
                 break
-            print(f"[VERIFY] Attempt {attempt + 1}/{max_retries}: Transaction not found, retrying in {retry_delay}s...", flush=True)
-            await asyncio.sleep(retry_delay)
-        
+
+            status_response = await client.get_signature_statuses(
+                [sig],
+                search_transaction_history=True,
+            )
+            status = None
+            if status_response and getattr(status_response, "value", None):
+                status = status_response.value[0]
+
+            if status and getattr(status, "err", None):
+                print(f"[VERIFY] ERROR: Signature status reports failure: {status.err}", flush=True)
+                return False
+
+            remaining = TX_FETCH_MAX_WAIT_SECONDS - elapsed
+            sleep_for = min(retry_delay, remaining)
+            if sleep_for <= 0:
+                break
+
+            print(
+                f"[VERIFY] Attempt {attempts}: not indexed yet, retrying in {sleep_for:.2f}s "
+                f"(elapsed {elapsed:.2f}/{TX_FETCH_MAX_WAIT_SECONDS:.2f}s)...",
+                flush=True,
+            )
+            await asyncio.sleep(sleep_for)
+            elapsed += sleep_for
+            retry_delay = min(retry_delay * 1.5, TX_FETCH_MAX_DELAY_SECONDS)
+
         if not response or not response.value:
-            print(f"[VERIFY] ERROR: Transaction not found in RPC after {max_retries} attempts", flush=True)
+            print(
+                f"[VERIFY] ERROR: Transaction not found in RPC after waiting "
+                f"{TX_FETCH_MAX_WAIT_SECONDS:.2f}s",
+                flush=True,
+            )
             return False
 
         print(f"[VERIFY] Transaction found", flush=True)
