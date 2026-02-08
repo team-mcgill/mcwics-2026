@@ -14,8 +14,6 @@ const MAX_PIXEL_RATIO = 1.5;
 const DEFAULT_TEX_SIZE = 2048;
 const ACCESSORY_TARGET_HEIGHT_RATIO = 0.82;
 const ACCESSORY_MIN_TARGET_HEIGHT = 190;
-const ACCESSORY_SCALE_MULTIPLIER_MIN = 0.2;
-const ACCESSORY_SCALE_MULTIPLIER_MAX = 4;
 const ACCESSORY_BASE_SCALE_BOOST = 2.50;
 const ACCESSORY_DYNAMIC_SCALE_MIN = 0.58;
 const ACCESSORY_DYNAMIC_SCALE_MAX = 3.15;
@@ -264,9 +262,9 @@ export const FaceMeshPainter = forwardRef(function FaceMeshPainter(props, ref) {
       const defaultRot = normalizeAccessoryVec3(characterDefaultRotation, { x: 0, y: 0, z: 0 });
 
       const defaultScale = {
-        x: THREE.MathUtils.clamp(Math.abs(defaultScaleRaw.x), ACCESSORY_SCALE_MULTIPLIER_MIN, ACCESSORY_SCALE_MULTIPLIER_MAX),
-        y: THREE.MathUtils.clamp(Math.abs(defaultScaleRaw.y), ACCESSORY_SCALE_MULTIPLIER_MIN, ACCESSORY_SCALE_MULTIPLIER_MAX),
-        z: THREE.MathUtils.clamp(Math.abs(defaultScaleRaw.z), ACCESSORY_SCALE_MULTIPLIER_MIN, ACCESSORY_SCALE_MULTIPLIER_MAX),
+        x: Math.abs(defaultScaleRaw.x),
+        y: Math.abs(defaultScaleRaw.y),
+        z: Math.abs(defaultScaleRaw.z),
       };
 
       const initialBox = new THREE.Box3().setFromObject(model);
@@ -292,11 +290,7 @@ export const FaceMeshPainter = forwardRef(function FaceMeshPainter(props, ref) {
       };
       model.rotation.set(baseRotation.x, baseRotation.y, baseRotation.z);
 
-      const defaultPos = {
-        x: THREE.MathUtils.clamp(defaultPosRaw.x, -width * 0.45, width * 0.45),
-        y: THREE.MathUtils.clamp(defaultPosRaw.y, -height * 0.45, height * 0.45),
-        z: THREE.MathUtils.clamp(defaultPosRaw.z, -900, 900),
-      };
+      const defaultPos = { ...defaultPosRaw };
 
       model.position.set(defaultPos.x, defaultPos.y, defaultPos.z);
 

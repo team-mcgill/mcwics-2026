@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import time
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
@@ -36,7 +37,7 @@ DEFAULT_ADMIN_ITEMS = [
         "defaultPosition": {"x": 0, "y": -40, "z": 20},
         "defaultScale": {"x": 0.6, "y": 0.6, "z": 0.6},
         "defaultRotation": {"x": 0, "y": 0, "z": 0},
-        "characterDefaultPosition": {"x": 0, "y": 8, "z": 24},
+        "characterDefaultPosition": {"x": 0, "y": 200, "z": 0},
         "characterDefaultScale": {"x": 0.22, "y": 0.22, "z": 0.22},
         "characterDefaultRotation": {"x": 0, "y": 3.141592653589793, "z": 0},
         "roomDefaultPosition": {"x": 0, "y": 0.95, "z": 0},
@@ -53,7 +54,7 @@ DEFAULT_ADMIN_ITEMS = [
         "defaultPosition": {"x": 0, "y": -40, "z": 20},
         "defaultScale": {"x": 0.6, "y": 0.6, "z": 0.6},
         "defaultRotation": {"x": 0, "y": 0, "z": 0},
-        "characterDefaultPosition": {"x": 0, "y": -24.25, "z": 28},
+        "characterDefaultPosition": {"x": 0, "y": -4.25, "z": 28},
         "characterDefaultScale": {"x": 0.165, "y": 0.165, "z": 0.165},
         "characterDefaultRotation": {"x": 0, "y": 3.141592653589793, "z": 0},
         "roomDefaultPosition": {"x": 0, "y": 0.29, "z": 0.02},
@@ -70,8 +71,8 @@ DEFAULT_ADMIN_ITEMS = [
         "defaultPosition": {"x": 0, "y": -40, "z": 20},
         "defaultScale": {"x": 0.6, "y": 0.6, "z": 0.6},
         "defaultRotation": {"x": 0, "y": 0, "z": 0},
-        "characterDefaultPosition": {"x": 0, "y": -10, "z": 14},
-        "characterDefaultScale": {"x": 0.14, "y": 0.14, "z": 0.14},
+        "characterDefaultPosition": {"x": 0, "y": 100, "z": 0},
+        "characterDefaultScale": {"x": 0.1, "y": 0.1, "z": 0.1},
         "characterDefaultRotation": {"x": 0, "y": 3.141592653589793, "z": 0},
         "roomDefaultPosition": {"x": 0, "y": 0.34, "z": -0.03},
         "roomDefaultScale": {"x": 0.56, "y": 0.56, "z": 0.56},
@@ -95,16 +96,6 @@ DEFAULT_ADMIN_ITEMS = [
         "roomDefaultRotation": {"x": 0, "y": 0, "z": 0},
     },
 ]
-
-
-def _ensure_catalog(catalog_path: Path) -> None:
-    """Ensure catalog file exists with default items."""
-    catalog_path.parent.mkdir(parents=True, exist_ok=True)
-    # Always write default items to ensure consistency
-    with open(catalog_path, "w", encoding="utf-8") as f:
-        json.dump({"items": DEFAULT_ADMIN_ITEMS}, f, indent=2)
-
-
 def _ensure_purchases(purchases_path: Path) -> None:
     """Ensure purchases file exists."""
     if not purchases_path.exists():
@@ -114,11 +105,9 @@ def _ensure_purchases(purchases_path: Path) -> None:
 
 
 def list_admin_items(catalog_path: Path) -> list[dict[str, Any]]:
-    """Return list of all admin items."""
-    _ensure_catalog(catalog_path)
-    with open(catalog_path, "r", encoding="utf-8") as f:
-        data = json.load(f)
-    return data.get("items", [])
+    """Return global admin items defaults."""
+    _ = catalog_path
+    return deepcopy(DEFAULT_ADMIN_ITEMS)
 
 
 def get_admin_item(catalog_path: Path, item_id: str) -> dict[str, Any] | None:

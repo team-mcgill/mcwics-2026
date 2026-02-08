@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useWallet, useConnection } from '@solana/wallet-adapter-react';
 import { fetchWalletDesignInventory, FALLBACK_IMAGE } from '../lib/solana/inventory';
 import { fetchMarketplaceListings } from '../lib/api/marketplace';
@@ -26,6 +26,15 @@ function formatSol(value) {
 }
 
 const ADMIN_ITEMS_CACHE_PREFIX = 'admin-items-inventory:';
+
+function buildAdminAccessoryMap(inventory) {
+  return new Map(
+    (Array.isArray(inventory) ? inventory : [])
+      .map((inventoryItem) => inventoryItem?.item)
+      .filter((item) => item && typeof item.id === 'string' && item.id)
+      .map((item) => [item.id, item])
+  );
+}
 
 export function MaskInventory({
   painterRef,
@@ -57,8 +66,10 @@ export function MaskInventory({
   const [isSyncingListings, setIsSyncingListings] = useState(false);
   const [adminItems, setAdminItems] = useState([]);
   const [isLoadingAdminItems, setIsLoadingAdminItems] = useState(false);
+  const [lastAdminRefreshAt, setLastAdminRefreshAt] = useState(0);
   const [activeTab, setActiveTab] = useState('designs');
   const [selectedAccessories, setSelectedAccessories] = useState(new Map());
+  const selectedAccessoriesRef = useRef(selectedAccessories);
 
   const { publicKey, signMessage } = useWallet();
   const { connection } = useConnection();
@@ -72,6 +83,7 @@ export function MaskInventory({
   const loadedDesign = loadedDesignId
     ? designs.find((design) => design.id === loadedDesignId) ?? null
     : null;
+  const adminAccessoryById = useMemo(() => buildAdminAccessoryMap(adminItems), [adminItems]);
 
   const upsertJob = useCallback((jobId, patch) => {
     setBackgroundJobs((prev) => prev.map((job) => (job.id === jobId ? { ...job, ...patch } : job)));
@@ -151,7 +163,7 @@ export function MaskInventory({
   const refreshAdminItems = useCallback(async ({ silent = false } = {}) => {
     if (!publicKey || typeof signMessage !== 'function') {
       setAdminItems([]);
-      return;
+      return [];
     }
 
     if (!silent) {
@@ -162,9 +174,12 @@ export function MaskInventory({
       const response = await fetchUserAdminInventory({ publicKey, signMessage });
       const inventory = Array.isArray(response?.inventory) ? response.inventory : [];
       setAdminItems(inventory);
+      setLastAdminRefreshAt(Date.now());
+      return inventory;
     } catch (error) {
       console.error('Failed to load admin items:', error);
       setAdminItems([]);
+      return [];
     } finally {
       if (!silent) {
         setIsLoadingAdminItems(false);
@@ -211,10 +226,44 @@ export function MaskInventory({
   // Only load data when user explicitly switches to the accessories tab
   const handleTabChange = useCallback((tab) => {
     setActiveTab(tab);
-    if (tab === 'accessories' && publicKey && adminItems.length === 0 && !isLoadingAdminItems) {
-      void refreshAdminItems();
+    if (tab === 'accessories' && publicKey && !isLoadingAdminItems) {
+      void refreshAdminItems({ silent: adminItems.length > 0 });
     }
   }, [publicKey, adminItems.length, isLoadingAdminItems, refreshAdminItems]);
+
+  useEffect(() => {
+    selectedAccessoriesRef.current = selectedAccessories;
+  }, [selectedAccessories]);
+
+  useEffect(() => {
+    if (!adminItems.length) return;
+
+    const latestById = buildAdminAccessoryMap(adminItems);
+
+    const currentSelected = selectedAccessoriesRef.current;
+    if (!currentSelected.size) return;
+
+    const nextSelected = new Map();
+
+    currentSelected.forEach((_, itemId) => {
+      const latestItem = latestById.get(itemId);
+      if (!latestItem) {
+        onAccessoryToggle?.(itemId, false, null);
+        return;
+      }
+
+      const updatedItem = {
+        ...latestItem,
+        id: itemId,
+        __transformSource: 'admin-live',
+      };
+
+      nextSelected.set(itemId, updatedItem);
+      onAccessoryToggle?.(itemId, true, updatedItem);
+    });
+
+    setSelectedAccessories(nextSelected);
+  }, [adminItems, onAccessoryToggle]);
 
   useEffect(() => {
     if (!publicKey) {
@@ -418,7 +467,7 @@ export function MaskInventory({
     })();
   };
 
-  const handleLoadDesign = (design) => {
+  const handleLoadDesign = async (design) => {
     if (!painterRef.current || design.pending) return;
 
     painterRef.current.loadDesign({
@@ -429,12 +478,20 @@ export function MaskInventory({
     setLoadedDesignId(design.id);
     onDesignLoad?.(design);
 
+    let latestById = adminAccessoryById;
+    if (publicKey && typeof signMessage === 'function') {
+      const latestInventory = await refreshAdminItems({ silent: true });
+      latestById = buildAdminAccessoryMap(latestInventory);
+    }
+
     const nextAccessoriesRaw = Array.isArray(design.accessories) ? design.accessories : [];
     const nextAccessories = nextAccessoriesRaw
       .filter((item) => item && typeof item.id === 'string' && item.id)
       .map((item) => ({
         ...item,
+        ...(latestById.get(item.id) ?? {}),
         id: item.id,
+        __transformSource: latestById.has(item.id) ? 'admin-live' : 'design-snapshot',
       }));
 
     const nextMap = new Map(nextAccessories.map((item) => [item.id, item]));
@@ -704,22 +761,27 @@ export function MaskInventory({
   };
 
   const handleAccessoryToggle = useCallback((itemId, isEquipped, itemData = null) => {
+    const normalizedItem = isEquipped && itemData
+      ? {
+          ...itemData,
+          id: itemId,
+          __transformSource: itemData.__transformSource ?? (adminAccessoryById.has(itemId) ? 'admin-live' : 'design-snapshot'),
+        }
+      : null;
+
     setSelectedAccessories((prev) => {
       const next = new Map(prev);
       if (isEquipped) {
-        if (itemData) {
-          next.set(itemId, {
-            ...itemData,
-            id: itemId,
-          });
+        if (normalizedItem) {
+          next.set(itemId, normalizedItem);
         }
       } else {
         next.delete(itemId);
       }
-      onAccessoryToggle?.(itemId, isEquipped, itemData);
+      onAccessoryToggle?.(itemId, isEquipped, normalizedItem);
       return next;
     });
-  }, [onAccessoryToggle]);
+  }, [adminAccessoryById, onAccessoryToggle]);
 
   return (
     <div className="h-full flex flex-col">
@@ -771,6 +833,14 @@ export function MaskInventory({
           )}
         </button>
       </div>
+
+      {activeTab === 'accessories' && publicKey ? (
+        <p className="mb-3 text-[10px] tracking-wide text-[#718096]">
+          {lastAdminRefreshAt
+            ? `Accessory transforms synced: ${new Date(lastAdminRefreshAt).toLocaleTimeString()}`
+            : 'Accessory transforms not synced yet'}
+        </p>
+      ) : null}
 
       {activeJobCount > 0 ? (
         <div className="mb-4 rounded-lg inner-glow bg-[#d4af37]/5 px-3 py-2">
