@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useImperativeHandle, forwardRef } from 'react';
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { FilesetResolver, FaceLandmarker } from '@mediapipe/tasks-vision';
 import { TRIANGULATION } from '../lib/faceMesh/triangulation';
 import { UV_COORDS, UV_VERTEX_COUNT } from '../lib/faceMesh/uv';
@@ -81,6 +82,10 @@ export const FaceMeshPainter = forwardRef(function FaceMeshPainter(props, ref) {
   const strokesRef = useRef([]);
   const activeStrokeRef = useRef(null);
 
+  // Accessory management refs
+  const accessoriesRef = useRef(new Map());
+  const gltfLoaderRef = useRef(new GLTFLoader());
+
   const getScaledBrushWidth = useCallback((size) => {
     const { width } = renderSizeRef.current;
     const scale = width > 0 ? paintCanvas.width / width : paintCanvas.width / VIDEO_WIDTH;
@@ -94,6 +99,99 @@ export const FaceMeshPainter = forwardRef(function FaceMeshPainter(props, ref) {
     if (!renderer || !scene || !camera) return;
     renderer.render(scene, camera);
   }, []);
+
+  const loadAccessory = useCallback(async (itemId, modelUrl, transform = {}) => {
+    const scene = sceneRef.current;
+    if (!scene) return null;
+
+    // Remove existing if any
+    if (accessoriesRef.current.has(itemId)) {
+      const existing = accessoriesRef.current.get(itemId);
+      scene.remove(existing);
+      accessoriesRef.current.delete(itemId);
+    }
+
+    try {
+      const gltf = await new Promise((resolve, reject) => {
+        gltfLoaderRef.current.load(modelUrl, resolve, undefined, reject);
+      });
+
+      const model = gltf.scene;
+
+      // Apply default transform
+      const defaultPos = transform.defaultPosition || { x: 0, y: 0, z: 0 };
+      const defaultScale = transform.defaultScale || { x: 1, y: 1, z: 1 };
+      const defaultRot = transform.defaultRotation || { x: 0, y: 0, z: 0 };
+
+      model.position.set(defaultPos.x, defaultPos.y, defaultPos.z);
+      model.scale.set(defaultScale.x, defaultScale.y, defaultScale.z);
+      model.rotation.set(defaultRot.x, defaultRot.y, defaultRot.z);
+
+      // Store original transform for face tracking updates
+      model.userData = {
+        itemId,
+        originalTransform: { ...defaultPos },
+      };
+
+      scene.add(model);
+      accessoriesRef.current.set(itemId, model);
+      renderScene();
+      return model;
+    } catch (err) {
+      console.error('Failed to load accessory:', err);
+      return null;
+    }
+  }, [renderScene]);
+
+  const unloadAccessory = useCallback((itemId) => {
+    const scene = sceneRef.current;
+    if (!scene) return;
+
+    if (accessoriesRef.current.has(itemId)) {
+      const model = accessoriesRef.current.get(itemId);
+      scene.remove(model);
+      accessoriesRef.current.delete(itemId);
+      renderScene();
+    }
+  }, [renderScene]);
+
+  const toggleAccessory = useCallback(async (itemId, isEquipped, itemData = null) => {
+    if (isEquipped) {
+      if (itemData?.modelUrl) {
+        await loadAccessory(itemId, itemData.modelUrl, {
+          defaultPosition: itemData.defaultPosition,
+          defaultScale: itemData.defaultScale,
+          defaultRotation: itemData.defaultRotation,
+        });
+      }
+    } else {
+      unloadAccessory(itemId);
+    }
+  }, [loadAccessory, unloadAccessory]);
+
+  const updateAccessoryPositions = useCallback((landmarks) => {
+    if (!landmarks || accessoriesRef.current.size === 0) return;
+
+    // Use forehead/nose bridge area as anchor (landmarks around 10-168)
+    const anchorIndex = 10; // Forehead center
+    const anchor = landmarks[anchorIndex];
+    if (!anchor) return;
+
+    const { width, height } = renderSizeRef.current;
+
+    accessoriesRef.current.forEach((model) => {
+      const basePos = model.userData.originalTransform;
+
+      // Convert anchor to screen space and apply offset
+      const anchorX = (anchor.x * width) - (width / 2);
+      const anchorY = -((anchor.y * height) - (height / 2));
+
+      model.position.x = anchorX + (basePos.x || 0);
+      model.position.y = anchorY + (basePos.y || 0);
+    });
+
+    renderScene();
+  }, [renderScene]);
 
   const drawStrokeList = useCallback((strokes) => {
     const ctx = paintCtxRef.current;
@@ -356,6 +454,9 @@ export const FaceMeshPainter = forwardRef(function FaceMeshPainter(props, ref) {
 
               attr.needsUpdate = true;
               hasLandmarksRef.current = true;
+
+              // Update accessory positions to follow face
+              updateAccessoryPositions(landmarks);
             }
           }
 
@@ -621,7 +722,9 @@ export const FaceMeshPainter = forwardRef(function FaceMeshPainter(props, ref) {
       drawStrokeList(normalized);
     },
     clearDrawing,
-  }), [clearDrawing, drawStrokeList, normalizeStrokeData, paintCanvas, renderScene]);
+    toggleAccessory,
+    getActiveAccessories: () => Array.from(accessoriesRef.current.keys()),
+  }), [clearDrawing, drawStrokeList, normalizeStrokeData, paintCanvas, renderScene, toggleAccessory]);
 
   const handleLoadedMetadata = () => {
     const video = videoRef.current;

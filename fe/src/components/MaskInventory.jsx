@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useWallet, useConnection } from '@solana/wallet-adapter-react';
 import { fetchWalletDesignInventory, FALLBACK_IMAGE } from '../lib/solana/inventory';
 import { fetchMarketplaceListings } from '../lib/api/marketplace';
+import { fetchUserAdminInventory } from '../lib/api/adminItems';
 
 const INVENTORY_CACHE_PREFIX = 'mask-inventory:';
 const JOB_PRUNE_DELAY_MS = 5000;
@@ -24,6 +25,8 @@ function formatSol(value) {
   return numeric.toFixed(3).replace(/\.?0+$/, '');
 }
 
+const ADMIN_ITEMS_CACHE_PREFIX = 'admin-items-inventory:';
+
 export function MaskInventory({
   painterRef,
   onDesignLoad,
@@ -32,6 +35,7 @@ export function MaskInventory({
   onDeleteDesign,
   onSellDesign,
   onCancelListing,
+  onAccessoryToggle,
 }) {
   const [designs, setDesigns] = useState([]);
   const [loadedDesignId, setLoadedDesignId] = useState(null);
@@ -51,8 +55,12 @@ export function MaskInventory({
   const [inventoryError, setInventoryError] = useState('');
   const [marketListingsByMint, setMarketListingsByMint] = useState({});
   const [isSyncingListings, setIsSyncingListings] = useState(false);
+  const [adminItems, setAdminItems] = useState([]);
+  const [isLoadingAdminItems, setIsLoadingAdminItems] = useState(false);
+  const [activeTab, setActiveTab] = useState('designs');
+  const [selectedAccessories, setSelectedAccessories] = useState(new Set());
 
-  const { publicKey } = useWallet();
+  const { publicKey, signMessage } = useWallet();
   const { connection } = useConnection();
 
   const walletAddress = useMemo(() => (publicKey ? publicKey.toBase58() : ''), [publicKey]);
@@ -140,6 +148,30 @@ export function MaskInventory({
     }
   }, [walletAddress]);
 
+  const refreshAdminItems = useCallback(async ({ silent = false } = {}) => {
+    if (!publicKey || typeof signMessage !== 'function') {
+      setAdminItems([]);
+      return;
+    }
+
+    if (!silent) {
+      setIsLoadingAdminItems(true);
+    }
+
+    try {
+      const response = await fetchUserAdminInventory({ publicKey, signMessage });
+      const inventory = Array.isArray(response?.inventory) ? response.inventory : [];
+      setAdminItems(inventory);
+    } catch (error) {
+      console.error('Failed to load admin items:', error);
+      setAdminItems([]);
+    } finally {
+      if (!silent) {
+        setIsLoadingAdminItems(false);
+      }
+    }
+  }, [publicKey, signMessage]);
+
   const refreshInventory = useCallback(async ({ silent = false } = {}) => {
     if (!publicKey) {
       setDesigns([]);
@@ -176,6 +208,14 @@ export function MaskInventory({
     }
   }, [connection, publicKey, writeCachedInventory]);
 
+  // Only load data when user explicitly switches to the accessories tab
+  const handleTabChange = useCallback((tab) => {
+    setActiveTab(tab);
+    if (tab === 'accessories' && publicKey && adminItems.length === 0 && !isLoadingAdminItems) {
+      void refreshAdminItems();
+    }
+  }, [publicKey, adminItems.length, isLoadingAdminItems, refreshAdminItems]);
+
   useEffect(() => {
     if (!publicKey) {
       setDesigns([]);
@@ -184,6 +224,8 @@ export function MaskInventory({
       setIsLoadingInventory(false);
       setIsSyncingInventory(false);
       setMarketListingsByMint({});
+      setAdminItems([]);
+      setSelectedAccessories(new Set());
       return;
     }
 
@@ -198,6 +240,7 @@ export function MaskInventory({
     }
 
     void refreshOwnedListings({ silent: true });
+    // Don't auto-fetch admin items - wait for user to click Accessories tab
   }, [publicKey, readCachedInventory, refreshInventory, refreshOwnedListings]);
 
   useEffect(() => {
@@ -634,6 +677,19 @@ export function MaskInventory({
     return 'text-[#d4af37]';
   };
 
+  const handleAccessoryToggle = useCallback((itemId, isEquipped, itemData = null) => {
+    setSelectedAccessories((prev) => {
+      const next = new Set(prev);
+      if (isEquipped) {
+        next.add(itemId);
+      } else {
+        next.delete(itemId);
+      }
+      onAccessoryToggle?.(itemId, isEquipped, itemData);
+      return next;
+    });
+  }, [onAccessoryToggle]);
+
   return (
     <div className="h-full flex flex-col">
       <div className="flex items-center justify-between mb-6">
@@ -653,6 +709,35 @@ export function MaskInventory({
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
           </svg>
           {loadedDesign ? 'Save Changes' : 'Save Design'}
+        </button>
+      </div>
+
+      {/* Tabs */}
+      <div className="flex items-center gap-2 mb-4">
+        <button
+          onClick={() => handleTabChange('designs')}
+          className={`px-4 py-2 rounded-lg text-xs font-light tracking-wider uppercase transition-all duration-300 ${
+            activeTab === 'designs'
+              ? 'bg-[#d4af37] text-[#0a0a0a]'
+              : 'bg-[#111] text-[#718096] hover:text-white inner-glow'
+          }`}
+        >
+          Designs
+        </button>
+        <button
+          onClick={() => handleTabChange('accessories')}
+          className={`px-4 py-2 rounded-lg text-xs font-light tracking-wider uppercase transition-all duration-300 ${
+            activeTab === 'accessories'
+              ? 'bg-[#d4af37] text-[#0a0a0a]'
+              : 'bg-[#111] text-[#718096] hover:text-white inner-glow'
+          }`}
+        >
+          Accessories
+          {adminItems.length > 0 && (
+            <span className="ml-2 px-1.5 py-0.5 rounded-full bg-[#d4af37]/20 text-[#d4af37] text-[10px]">
+              {adminItems.length}
+            </span>
+          )}
         </button>
       </div>
 
@@ -717,7 +802,72 @@ export function MaskInventory({
       ) : null}
 
       <div className="flex-1 overflow-y-auto -mx-2 px-2">
-        {!publicKey ? (
+        {activeTab === 'accessories' ? (
+          // Accessories Tab
+          !publicKey ? (
+            <div className="flex flex-col items-center justify-center h-64 text-center">
+              <p className="text-[#718096] text-sm font-light mb-2">Wallet not connected</p>
+              <p className="text-[#555] text-xs font-light">Connect wallet to load your accessories</p>
+            </div>
+          ) : isLoadingAdminItems ? (
+            <div className="flex flex-col items-center justify-center h-64 text-center">
+              <div className="animate-spin h-6 w-6 border-2 border-[#d4af37] border-t-transparent rounded-full mb-3" />
+              <p className="text-[#718096] text-sm font-light">Loading accessories...</p>
+            </div>
+          ) : adminItems.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-64 text-center">
+              <div className="w-14 h-14 rounded-full bg-[#111] inner-glow flex items-center justify-center mb-4">
+                <svg className="w-6 h-6 text-[#555]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+                </svg>
+              </div>
+              <p className="text-[#718096] text-sm font-light mb-2">No accessories yet</p>
+              <p className="text-[#555] text-xs font-light">Visit the store to buy official accessories</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 gap-3">
+              {adminItems.map((inventoryItem) => {
+                const item = inventoryItem.item;
+                const isSelected = selectedAccessories.has(item.id);
+                return (
+                  <div
+                    key={item.id}
+                    className={`group bg-[#111] inner-glow rounded-xl overflow-hidden transition-all duration-300 cursor-pointer ${
+                      isSelected ? 'ring-1 ring-emerald-500/50' : 'hover:border-[#d4af37]/20'
+                    }`}
+                    onClick={() => handleAccessoryToggle(item.id, !isSelected, item)}
+                  >
+                    <div className="aspect-square relative overflow-hidden bg-[#1a1a1a]">
+                      <img
+                        src={item.thumbnailUrl || FALLBACK_IMAGE}
+                        alt={item.name}
+                        onError={(event) => {
+                          event.currentTarget.src = FALLBACK_IMAGE;
+                        }}
+                        className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity"
+                      />
+                      {isSelected ? (
+                        <div className="absolute top-2 right-2 w-5 h-5 rounded-full bg-emerald-500 flex items-center justify-center">
+                          <svg className="w-3 h-3 text-black" fill="currentColor" viewBox="0 0 20 20">
+                            <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                          </svg>
+                        </div>
+                      ) : null}
+                      <div className="absolute top-2 left-2 rounded-full bg-emerald-500/85 px-2 py-0.5">
+                        <p className="text-[9px] uppercase tracking-wider text-black">{item.category}</p>
+                      </div>
+                    </div>
+                    <div className="p-3">
+                      <h3 className="text-white text-xs font-medium truncate mb-1">{item.name}</h3>
+                      <p className="text-[#555] text-[10px] font-light">Click to {isSelected ? 'unequip' : 'equip'}</p>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )
+        ) : // Designs Tab
+        !publicKey ? (
           <div className="flex flex-col items-center justify-center h-64 text-center">
             <p className="text-[#718096] text-sm font-light mb-2">Wallet not connected</p>
             <p className="text-[#555] text-xs font-light">Connect wallet to load your devnet designs</p>

@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+from app.api.admin_items import router as admin_items_router
 from app.api.auth import router as auth_router
 from app.api.designs import router as designs_router
 from app.api.health import router as health_router
@@ -30,4 +31,5 @@ app.include_router(solana_router)
 app.include_router(auth_router)
 app.include_router(designs_router)
 app.include_router(marketplace_router)
+app.include_router(admin_items_router)
 app.include_router(rooms_router)

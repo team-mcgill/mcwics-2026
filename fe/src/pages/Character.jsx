@@ -21,6 +21,7 @@ function Character() {
   const hasPersistedEquipRef = useRef(false)
   const marketplaceConfigRef = useRef(null)
   const [activeDesign, setActiveDesign] = useState(null)
+  const [activeAccessories, setActiveAccessories] = useState(new Set())
   const { connection } = useConnection()
   const { publicKey, sendTransaction, signMessage } = useWallet()
 
@@ -151,6 +152,23 @@ function Character() {
     })
   }, [publicKey, signMessage])
 
+  const handleAccessoryToggle = useCallback((itemId, isEquipped, itemData = null) => {
+    setActiveAccessories((prev) => {
+      const next = new Set(prev)
+      if (isEquipped) {
+        next.add(itemId)
+      } else {
+        next.delete(itemId)
+      }
+      return next
+    })
+
+    // Notify the painter to toggle the accessory
+    if (painterRef.current?.toggleAccessory) {
+      painterRef.current.toggleAccessory(itemId, isEquipped, itemData)
+    }
+  }, [])
+
   useEffect(() => {
     if (!activeDesign) {
       if (hasPersistedEquipRef.current) {
@@ -195,7 +213,7 @@ function Character() {
           {/* Right Column - Inventory (2/5 width) */}
           <div className="lg:col-span-2">
             <div className="rounded-2xl bg-[#111] inner-glow p-6 h-[600px] lg:h-[calc(100vh-200px)] lg:max-h-[800px]">
-              <MaskInventory 
+              <MaskInventory
                 painterRef={painterRef}
                 onDesignLoad={setActiveDesign}
                 onMintDesign={handleMintDesign}
@@ -203,6 +221,7 @@ function Character() {
                 onDeleteDesign={handleDeleteDesign}
                 onSellDesign={handleSellDesign}
                 onCancelListing={handleCancelListing}
+                onAccessoryToggle={handleAccessoryToggle}
               />
             </div>
           </div>
