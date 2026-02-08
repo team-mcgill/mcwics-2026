@@ -6,6 +6,7 @@ import { RoomScene } from '../components/room/RoomScene'
 import { fetchRooms } from '../lib/api/rooms'
 import { createRoomSocket } from '../lib/api/roomsSocket'
 import { fetchUserAdminInventory } from '../lib/api/adminItems'
+import { getRandomRoomSpawn } from '../lib/rooms/maps'
 import { FALLBACK_IMAGE, fetchWalletDesignInventory } from '../lib/solana/inventory'
 
 const EQUIPPED_MASK_STORAGE_KEY = 'masquerade:equipped-mask'
@@ -682,6 +683,7 @@ function Room() {
     socket.connect()
       .then(() => {
         if (cancelled) return
+        const spawn = getRandomRoomSpawn(room?.mapId, { fallbackY: activeRoomGroundY })
         const initialCosmeticImageData = resolveEquippedMaskImageData(equippedMaskRef.current)
         const initialCosmeticAccessories = resolveEquippedMaskAccessories(equippedMaskRef.current)
         socket.sendJoin({
@@ -689,8 +691,8 @@ function Room() {
           wallet: walletAddress,
           cosmeticImageData: initialCosmeticImageData,
           cosmeticAccessories: initialCosmeticAccessories,
-          position: { x: 0, y: activeRoomGroundY, z: 0 },
-          rotationY: 0,
+          position: { x: spawn.x, y: spawn.y, z: spawn.z },
+          rotationY: spawn.rotationY,
         })
       })
       .catch(() => {
@@ -704,7 +706,7 @@ function Room() {
       socket.close()
       socketRef.current = null
     }
-  }, [activeRoomGroundY, activeRoomId, displayName, handleSocketMessage, walletAddress])
+  }, [activeRoomGroundY, activeRoomId, displayName, handleSocketMessage, room?.mapId, walletAddress])
 
   const refreshRoomMasks = useCallback(async () => {
     if (!publicKey) {

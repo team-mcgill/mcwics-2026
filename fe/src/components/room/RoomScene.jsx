@@ -14,6 +14,10 @@ const GRAVITY = 18
 const DEFAULT_GROUND_Y = 0
 const MIN_GROUND_Y = -5000
 const MAX_GROUND_Y = 5000
+const WALKABLE_SURFACE_NORMAL_MIN_Y = 0.35
+const SURFACE_RAYCAST_HEIGHT = 2.6
+const SURFACE_RAYCAST_DEPTH = 12
+const GROUND_SNAP_EPSILON = 0.14
 const CAMERA_FOLLOW_STIFFNESS = 8
 const CAMERA_DISTANCE = 5.7
 const CAMERA_LOOK_DISTANCE = 6.8
@@ -443,6 +447,17 @@ function fitRoomModelToScene(modelRoot) {
   })
 }
 
+function collectWalkableMeshes(root) {
+  const meshes = []
+
+  root.traverse((child) => {
+    if (!child.isMesh || !child.geometry) return
+    meshes.push(child)
+  })
+
+  return meshes
+}
+
 function resolveMapModelUrl(mapModelUrl) {
   if (typeof mapModelUrl === 'string' && mapModelUrl.trim()) {
     return mapModelUrl.trim()
@@ -507,6 +522,37 @@ export function RoomScene({ playersById, localPlayerId, onLocalMove, mapModelUrl
 
     const legacyRoomShell = createLegacyRoomShell()
     scene.add(legacyRoomShell)
+    legacyRoomShell.updateMatrixWorld(true)
+
+    const collisionRaycaster = new THREE.Raycaster()
+    const collisionRayOrigin = new THREE.Vector3()
+    const collisionRayDirection = new THREE.Vector3(0, -1, 0)
+    const collisionNormalMatrix = new THREE.Matrix3()
+    const collisionWorldNormal = new THREE.Vector3()
+    let walkableMeshes = collectWalkableMeshes(legacyRoomShell)
+
+    const sampleWalkableSurfaceY = (x, z, currentY) => {
+      if (!walkableMeshes.length) return null
+
+      const originY = clamp(currentY + SURFACE_RAYCAST_HEIGHT, MIN_GROUND_Y, MAX_GROUND_Y)
+      collisionRayOrigin.set(x, originY, z)
+      collisionRaycaster.set(collisionRayOrigin, collisionRayDirection)
+      collisionRaycaster.near = 0
+      collisionRaycaster.far = SURFACE_RAYCAST_HEIGHT + SURFACE_RAYCAST_DEPTH
+
+      const intersections = collisionRaycaster.intersectObjects(walkableMeshes, false)
+      for (const hit of intersections) {
+        if (!hit?.face || !hit?.object) continue
+
+        collisionNormalMatrix.getNormalMatrix(hit.object.matrixWorld)
+        collisionWorldNormal.copy(hit.face.normal).applyMatrix3(collisionNormalMatrix).normalize()
+        if (collisionWorldNormal.y < WALKABLE_SURFACE_NORMAL_MIN_Y) continue
+
+        return hit.point.y
+      }
+
+      return null
+    }
 
     const gltfLoader = new GLTFLoader()
     let roomModelRoot = null
@@ -519,6 +565,9 @@ export function RoomScene({ playersById, localPlayerId, onLocalMove, mapModelUrl
         roomModelRoot = gltf.scene
         fitRoomModelToScene(roomModelRoot)
         scene.add(roomModelRoot)
+        roomModelRoot.updateMatrixWorld(true)
+        const mapMeshes = collectWalkableMeshes(roomModelRoot)
+        walkableMeshes = mapMeshes.length ? mapMeshes : walkableMeshes
         legacyRoomShell.visible = false
       },
       undefined,
@@ -790,24 +839,13 @@ export function RoomScene({ playersById, localPlayerId, onLocalMove, mapModelUrl
       const avatar = avatars.get(localId)
       if (!avatar) return
 
-      // Handle jumping
-      const isOnGround = avatar.group.position.y <= resolvedGroundY
-      if (isOnGround && keyState.jump && !localMotion.isJumping) {
-        localMotion.verticalVelocity = JUMP_VELOCITY
-        localMotion.isJumping = true
-      }
-
-      // Apply gravity
-      if (!isOnGround || localMotion.verticalVelocity > 0) {
-        localMotion.verticalVelocity -= GRAVITY * deltaSeconds
-        avatar.group.position.y += localMotion.verticalVelocity * deltaSeconds
-
-        // Clamp to ground
-        if (avatar.group.position.y <= resolvedGroundY) {
-          avatar.group.position.y = resolvedGroundY
-          localMotion.verticalVelocity = 0
-          localMotion.isJumping = false
-        }
+      const resolveGroundAtCurrentPosition = () => {
+        const surfaceY = sampleWalkableSurfaceY(
+          avatar.group.position.x,
+          avatar.group.position.z,
+          avatar.group.position.y
+        )
+        return Number.isFinite(surfaceY) ? surfaceY : resolvedGroundY
       }
 
       worldForward.set(Math.sin(lookState.yaw), 0, Math.cos(lookState.yaw)).normalize()
@@ -856,6 +894,36 @@ export function RoomScene({ playersById, localPlayerId, onLocalMove, mapModelUrl
         const targetRotation = Math.atan2(velocityX, velocityZ)
         const rotationBlend = 1 - Math.exp(-TURN_SMOOTHING * deltaSeconds)
         avatar.group.rotation.y += shortestAngleDiff(avatar.group.rotation.y, targetRotation) * rotationBlend
+      }
+
+      const currentGroundY = resolveGroundAtCurrentPosition()
+      const isGrounded = avatar.group.position.y <= currentGroundY + GROUND_SNAP_EPSILON && localMotion.verticalVelocity <= 0
+
+      if (isGrounded) {
+        avatar.group.position.y = currentGroundY
+        localMotion.verticalVelocity = 0
+        localMotion.isJumping = false
+      }
+
+      if (isGrounded && keyState.jump && !localMotion.isJumping) {
+        localMotion.verticalVelocity = JUMP_VELOCITY
+        localMotion.isJumping = true
+      }
+
+      const shouldApplyGravity = localMotion.isJumping
+        || localMotion.verticalVelocity > 0
+        || avatar.group.position.y > currentGroundY + GROUND_SNAP_EPSILON
+
+      if (shouldApplyGravity) {
+        localMotion.verticalVelocity -= GRAVITY * deltaSeconds
+        avatar.group.position.y += localMotion.verticalVelocity * deltaSeconds
+
+        const landingGroundY = resolveGroundAtCurrentPosition()
+        if (localMotion.verticalVelocity <= 0 && avatar.group.position.y <= landingGroundY + GROUND_SNAP_EPSILON) {
+          avatar.group.position.y = landingGroundY
+          localMotion.verticalVelocity = 0
+          localMotion.isJumping = false
+        }
       }
 
       if (velocityLengthSq > 0.00001 || localMotion.isJumping) {
