@@ -9,6 +9,9 @@ const MOVE_SPEED = 6
 const MOVE_ACCELERATION = 18
 const MOVE_DECELERATION = 14
 const TURN_SMOOTHING = 14
+const JUMP_VELOCITY = 6.5
+const GRAVITY = 18
+const GROUND_Y = 0
 const CAMERA_FOLLOW_STIFFNESS = 8
 const CAMERA_DISTANCE = 5.7
 const CAMERA_LOOK_DISTANCE = 6.8
@@ -393,6 +396,8 @@ export function RoomScene({ playersById, localPlayerId, onLocalMove }) {
     const avatars = new Map()
     const localMotion = {
       velocity: new THREE.Vector2(0, 0),
+      verticalVelocity: 0,
+      isJumping: false,
     }
     const lookState = {
       yaw: 0,
@@ -410,6 +415,7 @@ export function RoomScene({ playersById, localPlayerId, onLocalMove }) {
       left: false,
       backward: false,
       right: false,
+      jump: false,
     }
 
     const addAvatar = (player) => {
@@ -540,6 +546,26 @@ export function RoomScene({ playersById, localPlayerId, onLocalMove }) {
       const avatar = avatars.get(localId)
       if (!avatar) return
 
+      // Handle jumping
+      const isOnGround = avatar.group.position.y <= GROUND_Y
+      if (isOnGround && keyState.jump && !localMotion.isJumping) {
+        localMotion.verticalVelocity = JUMP_VELOCITY
+        localMotion.isJumping = true
+      }
+
+      // Apply gravity
+      if (!isOnGround || localMotion.verticalVelocity > 0) {
+        localMotion.verticalVelocity -= GRAVITY * deltaSeconds
+        avatar.group.position.y += localMotion.verticalVelocity * deltaSeconds
+
+        // Clamp to ground
+        if (avatar.group.position.y <= GROUND_Y) {
+          avatar.group.position.y = GROUND_Y
+          localMotion.verticalVelocity = 0
+          localMotion.isJumping = false
+        }
+      }
+
       worldForward.set(Math.sin(lookState.yaw), 0, Math.cos(lookState.yaw)).normalize()
       worldRight.set(-Math.cos(lookState.yaw), 0, Math.sin(lookState.yaw)).normalize()
 
@@ -588,7 +614,7 @@ export function RoomScene({ playersById, localPlayerId, onLocalMove }) {
         avatar.group.rotation.y += shortestAngleDiff(avatar.group.rotation.y, targetRotation) * rotationBlend
       }
 
-      if (velocityLengthSq > 0.00001) {
+      if (velocityLengthSq > 0.00001 || localMotion.isJumping) {
         onLocalMoveRef.current?.({
           position: {
             x: avatar.group.position.x,
@@ -705,12 +731,20 @@ export function RoomScene({ playersById, localPlayerId, onLocalMove }) {
           event.preventDefault()
         }
       }
+
+      if (event.code === 'Space') {
+        keyState.jump = true
+        event.preventDefault()
+      }
     }
 
     const onKeyUp = (event) => {
       const direction = MOVEMENT_CODE_TO_DIRECTION[event.code]
       if (direction) {
         keyState[direction] = false
+      }
+      if (event.code === 'Space') {
+        keyState.jump = false
       }
     }
 
@@ -767,6 +801,7 @@ export function RoomScene({ playersById, localPlayerId, onLocalMove }) {
       keyState.left = false
       keyState.backward = false
       keyState.right = false
+      keyState.jump = false
       stopDragging()
     }
 
