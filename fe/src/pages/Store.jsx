@@ -14,7 +14,7 @@ import { FALLBACK_IMAGE } from '../lib/solana/inventory'
 
 const ModelPreview = lazy(() => import('../components/ModelPreview').then(m => ({ default: m.ModelPreview })))
 
-const STORE_TABS = ['Marketplace', 'Official']
+const STORE_TABS = ['Official', 'Marketplace']
 const CATEGORIES = ['All', 'Masks', 'Accessories', 'Outfits', 'Effects']
 const ADMIN_CATEGORIES = ['All', 'Headwear', 'Face']
 
@@ -112,7 +112,7 @@ function StoreItem({ item, buying, onBuy, isOfficial = false, isOwned = false })
 }
 
 function Store() {
-  const [activeTab, setActiveTab] = useState('Marketplace')
+  const [activeTab, setActiveTab] = useState('Official')
   const [selectedCategory, setSelectedCategory] = useState('All')
   const [selectedAdminCategory, setSelectedAdminCategory] = useState('All')
   const [listings, setListings] = useState([])
