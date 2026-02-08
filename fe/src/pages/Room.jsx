@@ -463,6 +463,7 @@ function Room() {
   const socketRef = useRef(null)
   const moveSentAtRef = useRef(0)
   const chatInputRef = useRef(null)
+  const chatMessagesRef = useRef(null)
   const equippedMaskRef = useRef(equippedMask)
 
   useEffect(() => {
@@ -835,8 +836,25 @@ function Room() {
 
     socketRef.current?.sendChat(trimmed)
     setChatInput('')
-    chatInputRef.current?.blur()
   }, [chatInput])
+
+  const scrollChatToBottom = useCallback(() => {
+    const container = chatMessagesRef.current
+    if (!container) return
+    container.scrollTop = container.scrollHeight
+  }, [])
+
+  useEffect(() => {
+    scrollChatToBottom()
+
+    const frameId = requestAnimationFrame(scrollChatToBottom)
+    const timeoutId = window.setTimeout(scrollChatToBottom, 80)
+
+    return () => {
+      cancelAnimationFrame(frameId)
+      window.clearTimeout(timeoutId)
+    }
+  }, [messages.length, scrollChatToBottom])
 
   if (!room) {
     return (
@@ -899,7 +917,11 @@ function Room() {
         </div>
 
         <div className="mt-3 rounded-2xl bg-[#111] inner-glow px-3 py-3 md:px-4 md:py-4">
-          <div className="max-h-28 overflow-y-auto mb-3 space-y-1.5 pr-1">
+          <div
+            ref={chatMessagesRef}
+            className="h-28 overflow-y-auto overscroll-contain mb-3 space-y-1.5 pr-1"
+            style={{ overflowAnchor: 'none' }}
+          >
             {messages.length === 0 ? (
               <p className="text-xs font-light text-[#555]">No chat yet. Say hi.</p>
             ) : (
