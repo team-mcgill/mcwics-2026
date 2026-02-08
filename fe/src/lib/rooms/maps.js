@@ -32,6 +32,17 @@ export const ROOM_MAPS = [
       { x: 0, y: 0.8, z: 8.1, rotationY: Math.PI },
     ],
   },
+  {
+    id: 'arabian-lounge',
+    name: 'Arabian Lounge',
+    modelUrl: '/models/arabian_lounge.glb',
+    defaultYAxis: 0,
+    spawnPoints: [
+      { x: 4.2, y: 0, z: -4.6, rotationY: Math.PI * 0.28 },
+      { x: -5.1, y: 0, z: 5.3, rotationY: -Math.PI * 0.32 },
+      { x: 0.8, y: 0.9, z: 7.6, rotationY: Math.PI * 0.95 },
+    ],
+  },
 ]
 
 export const DEFAULT_ROOM_MAP = ROOM_MAPS[0]
