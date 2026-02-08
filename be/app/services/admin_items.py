@@ -13,7 +13,7 @@ DEFAULT_ADMIN_ITEMS = [
     {
         "id": "sci-fi-helmet",
         "name": "Sci-Fi Helmet",
-        "category": "Headwear",
+        "category": "Face",
         "priceSol": 0.5,
         "modelUrl": "/models/sci-fi-helmet.glb",
         "thumbnailUrl": "/models/sci-fi-helmet.glb",

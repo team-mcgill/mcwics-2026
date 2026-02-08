@@ -940,181 +940,264 @@ function Room() {
         </div>
 
         {isChangingMask && (
-          <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-            <div className="w-full max-w-2xl rounded-2xl bg-[#111] inner-glow p-5 md:p-6">
-              <div className="flex items-start justify-between gap-4 mb-4">
-                <div>
-                  <h2 className="text-lg md:text-xl font-serif font-light text-white tracking-wide">Changing Room</h2>
-                  <p className="text-xs text-[#718096] mt-1">
-                    {equippedMask?.name ? `Equipped: ${equippedMask.name}` : 'No mask equipped'}
-                  </p>
+          <div className="fixed inset-0 bg-black/85 backdrop-blur-md z-50 flex items-center justify-center p-4">
+            <div className="w-full max-w-3xl rounded-2xl bg-[#111] inner-glow flex flex-col max-h-[85vh]">
+              {/* Header */}
+              <div className="flex items-center justify-between px-6 py-5 border-b border-white/5">
+                <div className="flex items-center gap-4">
+                  <div>
+                    <h2 className="text-xl font-serif font-light text-white tracking-wide">Changing Room</h2>
+                    {equippedMask?.name ? (
+                      <div className="flex items-center gap-2 mt-1">
+                        <span className="text-[11px] text-[#718096]">Currently wearing</span>
+                        <span className="px-2 py-0.5 rounded-full bg-[#d4af37]/10 border border-[#d4af37]/30 text-[#d4af37] text-[10px]">
+                          {equippedMask.name}
+                        </span>
+                      </div>
+                    ) : (
+                      <span className="text-[11px] text-[#555]">No mask equipped</span>
+                    )}
+                  </div>
                 </div>
                 <button
                   type="button"
                   onClick={() => setIsChangingMask(false)}
-                  className="text-xs tracking-widest uppercase text-[#a0a0a0] hover:text-white"
+                  className="p-2 text-[#555] hover:text-white hover:bg-white/5 rounded-xl transition-all duration-200"
+                  aria-label="Close"
                 >
-                  Close
+                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
                 </button>
               </div>
 
-              {!publicKey ? (
-                <p className="text-sm text-[#718096]">Connect your wallet to load masks.</p>
-              ) : (
-                <>
-                  <div className="flex items-center gap-2 mb-4">
-                    <button
-                      type="button"
-                      onClick={() => setChangeModalTab('masks')}
-                      className={`px-3 py-1.5 rounded-lg text-[11px] tracking-widest uppercase transition-all ${
-                        changeModalTab === 'masks'
-                          ? 'bg-[#d4af37] text-[#0a0a0a]'
-                          : 'border border-white/20 text-white/80 hover:bg-white/5'
-                      }`}
-                    >
-                      Masks
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setChangeModalTab('accessories')}
-                      className={`px-3 py-1.5 rounded-lg text-[11px] tracking-widest uppercase transition-all ${
-                        changeModalTab === 'accessories'
-                          ? 'bg-[#d4af37] text-[#0a0a0a]'
-                          : 'border border-white/20 text-white/80 hover:bg-white/5'
-                      }`}
-                    >
-                      Accessories
-                    </button>
-                  </div>
-
-                  <div className="flex flex-wrap items-center gap-3 mb-4">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setDraftMask(null)
-                        setDraftAccessories([])
-                        applyEquippedMask(null)
-                      }}
-                      className="px-3 py-1.5 rounded-lg border border-red-400/30 text-red-300 text-[11px] tracking-widest uppercase hover:bg-red-500/10"
-                    >
-                      Unequip
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (changeModalTab === 'accessories') {
-                          void refreshRoomAccessories()
-                          return
-                        }
-                        void refreshRoomMasks()
-                      }}
-                      className="px-3 py-1.5 rounded-lg border border-white/20 text-white/80 text-[11px] tracking-widest uppercase hover:bg-white/5"
-                    >
-                      Refresh
-                    </button>
-                    <button
-                      type="button"
-                      onClick={applyDraftCosmetics}
-                      className="px-3 py-1.5 rounded-lg border border-emerald-400/30 text-emerald-300 text-[11px] tracking-widest uppercase hover:bg-emerald-500/10"
-                    >
-                      Apply Cosmetic
-                    </button>
-                  </div>
-
-                  {maskLoadError && (
-                    <p className="text-xs text-red-300 mb-3">{maskLoadError}</p>
-                  )}
-
-                  {accessoryLoadError && (
-                    <p className="text-xs text-red-300 mb-3">{accessoryLoadError}</p>
-                  )}
-
-                  {changeModalTab === 'masks' ? isLoadingMasks ? (
-                    <p className="text-sm text-[#718096]">Loading masks...</p>
-                  ) : availableMasks.length === 0 ? (
-                    <p className="text-sm text-[#718096]">No masks found in your devnet inventory.</p>
-                  ) : (
-                    <div className="max-h-[56vh] overflow-y-auto grid grid-cols-2 md:grid-cols-3 gap-3">
-                      {availableMasks.map((mask) => {
-                        const isSelected = (
-                          (draftMask?.mintAddress && draftMask.mintAddress === mask.mintAddress)
-                          || (draftMask?.id && draftMask.id === mask.id)
-                        )
-
-                        return (
-                          <button
-                            key={mask.id}
-                            type="button"
-                            onClick={() => setDraftMask(mask)}
-                            className={`text-left rounded-xl overflow-hidden border transition-colors ${isSelected ? 'border-[#d4af37]/70' : 'border-white/10 hover:border-[#d4af37]/30'}`}
-                          >
-                            <div className="aspect-square bg-[#1a1a1a]">
-                              <img
-                                src={mask.imageData || FALLBACK_IMAGE}
-                                alt={mask.name || 'Mask'}
-                                onError={(event) => {
-                                  event.currentTarget.src = FALLBACK_IMAGE
-                                }}
-                                className="w-full h-full object-cover"
-                              />
-                            </div>
-                            <div className="px-2.5 py-2">
-                              <p className="text-xs text-white truncate">{mask.name || 'Untitled mask'}</p>
-                              <p className="text-[10px] text-[#8b7355] mt-1 tracking-widest uppercase">
-                                {isSelected ? 'Selected' : 'Select'}
-                              </p>
-                            </div>
-                          </button>
-                        )
-                      })}
+              {/* Content */}
+              <div className="flex-1 overflow-hidden flex flex-col">
+                {!publicKey ? (
+                  <div className="flex flex-col items-center justify-center py-16 text-center">
+                    <div className="w-14 h-14 rounded-full bg-[#1a1a1a] inner-glow flex items-center justify-center mb-4">
+                      <svg className="w-6 h-6 text-[#555]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                      </svg>
                     </div>
-                  ) : isLoadingAccessories ? (
-                    <p className="text-sm text-[#718096]">Loading accessories...</p>
-                  ) : availableAccessories.length === 0 ? (
-                    <p className="text-sm text-[#718096]">No official accessories owned yet.</p>
-                  ) : (
-                    <div className="max-h-[56vh] overflow-y-auto grid grid-cols-2 md:grid-cols-3 gap-3">
-                      {availableAccessories.map((accessory) => {
-                        const isSelected = draftAccessories.some((item) => item.id === accessory.id)
-                        const hasModel = typeof accessory.modelUrl === 'string' && accessory.modelUrl.trim()
+                    <p className="text-sm text-[#718096] font-light">Connect your wallet to load masks</p>
+                  </div>
+                ) : (
+                  <>
+                    {/* Tabs & Actions Bar */}
+                    <div className="flex items-center justify-between px-6 py-4 border-b border-white/5">
+                      <div className="flex items-center gap-1 bg-[#0a0a0a] rounded-xl p-1">
+                        <button
+                          type="button"
+                          onClick={() => setChangeModalTab('masks')}
+                          className={`px-4 py-2 rounded-lg text-[11px] font-light tracking-wider uppercase transition-all duration-200 ${
+                            changeModalTab === 'masks'
+                              ? 'bg-[#d4af37] text-[#0a0a0a]'
+                              : 'text-[#718096] hover:text-white'
+                          }`}
+                        >
+                          Masks
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setChangeModalTab('accessories')}
+                          className={`px-4 py-2 rounded-lg text-[11px] font-light tracking-wider uppercase transition-all duration-200 ${
+                            changeModalTab === 'accessories'
+                              ? 'bg-[#d4af37] text-[#0a0a0a]'
+                              : 'text-[#718096] hover:text-white'
+                          }`}
+                        >
+                          Accessories
+                        </button>
+                      </div>
 
-                        return (
-                          <button
-                            key={accessory.id}
-                            type="button"
-                            onClick={() => toggleDraftAccessory(accessory)}
-                            className={`text-left rounded-xl overflow-hidden border transition-colors ${isSelected ? 'border-emerald-400/70' : 'border-white/10 hover:border-emerald-400/30'}`}
-                          >
-                            <div className="aspect-square bg-[#1a1a1a]">
-                              {hasModel ? (
-                                <ModelPreview
-                                  modelUrl={accessory.modelUrl}
-                                  className="w-full h-full"
-                                />
-                              ) : (
-                                <img
-                                  src={accessory.thumbnailUrl || FALLBACK_IMAGE}
-                                  alt={accessory.name || 'Accessory'}
-                                  onError={(event) => {
-                                    event.currentTarget.src = FALLBACK_IMAGE
-                                  }}
-                                  className="w-full h-full object-cover"
-                                />
-                              )}
-                            </div>
-                            <div className="px-2.5 py-2">
-                              <p className="text-xs text-white truncate">{accessory.name || 'Accessory'}</p>
-                              <p className="text-[10px] text-[#8b7355] mt-1 tracking-widest uppercase">
-                                {isSelected ? 'Selected' : 'Select'}
-                              </p>
-                            </div>
-                          </button>
-                        )
-                      })}
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (changeModalTab === 'accessories') {
+                              void refreshRoomAccessories()
+                              return
+                            }
+                            void refreshRoomMasks()
+                          }}
+                          title="Refresh"
+                          className="p-2.5 text-[#555] hover:text-[#d4af37] hover:bg-[#d4af37]/10 rounded-xl transition-all duration-200"
+                        >
+                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                          </svg>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setDraftMask(null)
+                            setDraftAccessories([])
+                            applyEquippedMask(null)
+                          }}
+                          className="px-4 py-2.5 text-[11px] font-light tracking-wider uppercase text-[#555] hover:text-red-400 hover:bg-red-500/10 rounded-xl transition-all duration-200"
+                        >
+                          Unequip
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={applyDraftCosmetics}
+                          className="px-5 py-2.5 btn-convex text-[#0a0a0a] text-[11px] font-light tracking-wider uppercase rounded-xl transition-all duration-200 hover:-translate-y-0.5"
+                        >
+                          Apply
+                        </button>
+                      </div>
                     </div>
-                  )}
-                </>
-              )}
+
+                    {/* Error Messages */}
+                    {maskLoadError && (
+                      <div className="mx-6 mt-4 rounded-lg bg-red-500/10 border border-red-500/30 px-4 py-2">
+                        <p className="text-xs text-red-300">{maskLoadError}</p>
+                      </div>
+                    )}
+
+                    {accessoryLoadError && (
+                      <div className="mx-6 mt-4 rounded-lg bg-red-500/10 border border-red-500/30 px-4 py-2">
+                        <p className="text-xs text-red-300">{accessoryLoadError}</p>
+                      </div>
+                    )}
+
+                    {/* Grid Content */}
+                    <div className="flex-1 overflow-y-auto p-6">
+                      {changeModalTab === 'masks' ? isLoadingMasks ? (
+                        <div className="flex flex-col items-center justify-center py-16">
+                          <div className="animate-spin h-8 w-8 border-2 border-[#d4af37] border-t-transparent rounded-full mb-4" />
+                          <p className="text-sm text-[#718096] font-light">Loading masks...</p>
+                        </div>
+                      ) : availableMasks.length === 0 ? (
+                        <div className="flex flex-col items-center justify-center py-16 text-center">
+                          <div className="w-14 h-14 rounded-full bg-[#1a1a1a] inner-glow flex items-center justify-center mb-4">
+                            <svg className="w-6 h-6 text-[#555]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                            </svg>
+                          </div>
+                          <p className="text-sm text-[#718096] font-light mb-1">No masks found</p>
+                          <p className="text-xs text-[#555] font-light">Create and mint a mask to see it here</p>
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                          {availableMasks.map((mask) => {
+                            const isSelected = (
+                              (draftMask?.mintAddress && draftMask.mintAddress === mask.mintAddress)
+                              || (draftMask?.id && draftMask.id === mask.id)
+                            )
+
+                            return (
+                              <button
+                                key={mask.id}
+                                type="button"
+                                onClick={() => setDraftMask(mask)}
+                                className={`group text-left rounded-xl overflow-hidden bg-[#0a0a0a] transition-all duration-200 ${
+                                  isSelected 
+                                    ? 'ring-2 ring-[#d4af37]/70 ring-offset-2 ring-offset-[#111]' 
+                                    : 'hover:ring-1 hover:ring-[#d4af37]/30'
+                                }`}
+                              >
+                                <div className="aspect-square bg-[#1a1a1a] relative overflow-hidden">
+                                  <img
+                                    src={mask.imageData || FALLBACK_IMAGE}
+                                    alt={mask.name || 'Mask'}
+                                    onError={(event) => {
+                                      event.currentTarget.src = FALLBACK_IMAGE
+                                    }}
+                                    className="w-full h-full object-cover opacity-90 group-hover:opacity-100 transition-opacity duration-200"
+                                  />
+                                  {isSelected && (
+                                    <div className="absolute top-2 right-2 w-6 h-6 rounded-full bg-[#d4af37] flex items-center justify-center">
+                                      <svg className="w-3.5 h-3.5 text-black" fill="currentColor" viewBox="0 0 20 20">
+                                        <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                                      </svg>
+                                    </div>
+                                  )}
+                                </div>
+                                <div className="px-3 py-3">
+                                  <p className="text-xs text-white font-medium truncate">{mask.name || 'Untitled mask'}</p>
+                                  <p className="text-[10px] text-[#555] mt-1">
+                                    {isSelected ? 'Selected' : 'Click to select'}
+                                  </p>
+                                </div>
+                              </button>
+                            )
+                          })}
+                        </div>
+                      ) : isLoadingAccessories ? (
+                        <div className="flex flex-col items-center justify-center py-16">
+                          <div className="animate-spin h-8 w-8 border-2 border-[#d4af37] border-t-transparent rounded-full mb-4" />
+                          <p className="text-sm text-[#718096] font-light">Loading accessories...</p>
+                        </div>
+                      ) : availableAccessories.length === 0 ? (
+                        <div className="flex flex-col items-center justify-center py-16 text-center">
+                          <div className="w-14 h-14 rounded-full bg-[#1a1a1a] inner-glow flex items-center justify-center mb-4">
+                            <svg className="w-6 h-6 text-[#555]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+                            </svg>
+                          </div>
+                          <p className="text-sm text-[#718096] font-light mb-1">No accessories yet</p>
+                          <p className="text-xs text-[#555] font-light">Visit the store to buy official accessories</p>
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                          {availableAccessories.map((accessory) => {
+                            const isSelected = draftAccessories.some((item) => item.id === accessory.id)
+                            const hasModel = typeof accessory.modelUrl === 'string' && accessory.modelUrl.trim()
+
+                            return (
+                              <button
+                                key={accessory.id}
+                                type="button"
+                                onClick={() => toggleDraftAccessory(accessory)}
+                                className={`group text-left rounded-xl overflow-hidden bg-[#0a0a0a] transition-all duration-200 ${
+                                  isSelected 
+                                    ? 'ring-2 ring-emerald-500/70 ring-offset-2 ring-offset-[#111]' 
+                                    : 'hover:ring-1 hover:ring-emerald-500/30'
+                                }`}
+                              >
+                                <div className="aspect-square bg-[#1a1a1a] relative overflow-hidden">
+                                  {hasModel ? (
+                                    <ModelPreview
+                                      modelUrl={accessory.modelUrl}
+                                      className="w-full h-full"
+                                    />
+                                  ) : (
+                                    <img
+                                      src={accessory.thumbnailUrl || FALLBACK_IMAGE}
+                                      alt={accessory.name || 'Accessory'}
+                                      onError={(event) => {
+                                        event.currentTarget.src = FALLBACK_IMAGE
+                                      }}
+                                      className="w-full h-full object-cover opacity-90 group-hover:opacity-100 transition-opacity duration-200"
+                                    />
+                                  )}
+                                  {isSelected && (
+                                    <div className="absolute top-2 right-2 w-6 h-6 rounded-full bg-emerald-500 flex items-center justify-center">
+                                      <svg className="w-3.5 h-3.5 text-black" fill="currentColor" viewBox="0 0 20 20">
+                                        <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                                      </svg>
+                                    </div>
+                                  )}
+                                </div>
+                                <div className="px-3 py-3">
+                                  <p className="text-xs text-white font-medium truncate">{accessory.name || 'Accessory'}</p>
+                                  <p className="text-[10px] text-[#555] mt-1">
+                                    {isSelected ? 'Selected' : 'Click to select'}
+                                  </p>
+                                </div>
+                              </button>
+                            )
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
             </div>
           </div>
         )}
