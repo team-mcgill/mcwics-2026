@@ -747,7 +747,7 @@ export function RoomScene({ playersById, localPlayerId, onLocalMove }) {
 
       lookState.yaw += deltaX * MOUSE_LOOK_SENSITIVITY
       lookState.pitch = clamp(
-        lookState.pitch - (deltaY * MOUSE_LOOK_SENSITIVITY),
+        lookState.pitch + (deltaY * MOUSE_LOOK_SENSITIVITY),
         CAMERA_PITCH_MIN,
         CAMERA_PITCH_MAX
       )
