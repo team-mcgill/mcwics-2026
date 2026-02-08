@@ -23,6 +23,7 @@ const ACCESSORY_POSITION_SMOOTHING = 0.38;
 const ACCESSORY_DYNAMIC_SCALE_EXPONENT = 1.52;
 const ACCESSORY_DYNAMIC_SCALE_WIDTH_WEIGHT = 0.62;
 const ACCESSORY_DYNAMIC_SCALE_HEIGHT_WEIGHT = 0.38;
+const ACCESSORY_HAT_OFFSET_RATIO_THRESHOLD = 0.12;
 const ACCESSORY_FORWARD_Y_OFFSET = Math.PI;
 const CHARACTER_AMBIENT_LIGHT_INTENSITY = 0.38;
 const CHARACTER_DIRECTIONAL_LIGHT_INTENSITY = 0.52;
@@ -383,8 +384,16 @@ export const FaceMeshPainter = forwardRef(function FaceMeshPainter(props, ref) {
       const anchorX = (anchor.x * width) - (width / 2);
       const anchorY = -((anchor.y * height) - (height / 2));
 
-      const targetX = anchorX + (basePos.x || 0);
-      const targetY = anchorY + (basePos.y || 0);
+      const smoothedScaleFactor = previousScale
+        + (targetScaleFactor - previousScale) * ACCESSORY_DYNAMIC_SCALE_SMOOTHING;
+
+      const yOffsetMagnitude = Math.abs(basePos.y || 0);
+      const yOffsetRatio = yOffsetMagnitude / normalizedHeightBaseline;
+      const isHatLike = yOffsetRatio >= ACCESSORY_HAT_OFFSET_RATIO_THRESHOLD;
+      const offsetScaleMultiplier = isHatLike ? smoothedScaleFactor : 1;
+
+      const targetX = anchorX + ((basePos.x || 0) * offsetScaleMultiplier);
+      const targetY = anchorY + ((basePos.y || 0) * offsetScaleMultiplier);
       const targetZ = basePos.z || 0;
 
       smoothedPosition.x += (targetX - smoothedPosition.x) * ACCESSORY_POSITION_SMOOTHING;
@@ -398,9 +407,6 @@ export const FaceMeshPainter = forwardRef(function FaceMeshPainter(props, ref) {
       smoothedRotation.y += (targetYaw - smoothedRotation.y) * ACCESSORY_ROTATION_SMOOTHING;
       smoothedRotation.x += (targetPitch - smoothedRotation.x) * ACCESSORY_ROTATION_SMOOTHING;
       smoothedRotation.z += (targetRoll - smoothedRotation.z) * ACCESSORY_ROTATION_SMOOTHING;
-
-      const smoothedScaleFactor = previousScale
-        + (targetScaleFactor - previousScale) * ACCESSORY_DYNAMIC_SCALE_SMOOTHING;
 
       model.position.set(smoothedPosition.x, smoothedPosition.y, smoothedPosition.z);
       model.rotation.set(
