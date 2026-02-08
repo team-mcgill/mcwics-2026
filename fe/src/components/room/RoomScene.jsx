@@ -320,6 +320,14 @@ function getAccessoryTargetHeight(accessory) {
   return AVATAR_ACCESSORY_TARGET_HEIGHT
 }
 
+function getAccessoryRoomScaleBoost(accessory) {
+  const id = typeof accessory?.id === 'string' ? accessory.id.toLowerCase() : ''
+  if (id === 'sci-fi-helmet') {
+    return 1.32
+  }
+  return 1
+}
+
 function fitAccessoryToAvatarHead(modelRoot, accessory) {
   modelRoot.updateMatrixWorld(true)
   const box = new THREE.Box3().setFromObject(modelRoot)
@@ -331,7 +339,8 @@ function fitAccessoryToAvatarHead(modelRoot, accessory) {
 
   const transform = getAccessoryRoomTransform(accessory)
   const scaleMultiplier = (transform.scale.x + transform.scale.y + transform.scale.z) / 3
-  const uniformScale = (targetHeight / baseHeight) * scaleMultiplier
+  const scaleBoost = getAccessoryRoomScaleBoost(accessory)
+  const uniformScale = (targetHeight / baseHeight) * scaleMultiplier * scaleBoost
 
   modelRoot.scale.setScalar(uniformScale)
   modelRoot.position.set(transform.position.x, transform.position.y, transform.position.z)
