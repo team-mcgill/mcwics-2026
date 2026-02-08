@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import secrets
 from datetime import datetime, timezone
+from pathlib import Path
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
+from pydantic import BaseModel, Field
 
+from app.services.room_catalog import create_room, list_rooms
 from app.services.room_state import RoomParticipant, room_state_manager
 
 router = APIRouter(tags=["rooms"])
@@ -13,8 +16,20 @@ MAX_NAME_LENGTH = 48
 MAX_CHAT_LENGTH = 240
 MAX_COSMETIC_IMAGE_DATA_LENGTH = 3_000_000
 MAX_COSMETIC_ACCESSORIES = 8
-MAX_COORDINATE_ABS = 200.0
+MAX_HORIZONTAL_COORDINATE_ABS = 200.0
+MAX_VERTICAL_COORDINATE_ABS = 5000.0
 MAX_ROTATION_ABS = 1000.0
+ROOMS_STORAGE_PATH = Path(__file__).resolve().parents[2] / "storage" / "rooms" / "catalog.json"
+
+
+class CreateRoomRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    topic: str = Field(min_length=1, max_length=60)
+    image: str = Field(min_length=1, max_length=16)
+    maxPlayers: int = Field(ge=2, le=120)
+    mapId: str = Field(min_length=1, max_length=80)
+    mapModel: str = Field(min_length=1, max_length=220)
+    defaultYAxis: float = Field(ge=-5000, le=5000)
 
 
 def _to_float(value: object, default: float = 0.0) -> float:
@@ -227,9 +242,9 @@ def _parse_position(value: object) -> dict[str, float]:
         return {"x": 0.0, "y": 0.0, "z": 0.0}
 
     return {
-        "x": _clamp(_to_float(value.get("x"), 0.0), -MAX_COORDINATE_ABS, MAX_COORDINATE_ABS),
-        "y": _clamp(_to_float(value.get("y"), 0.0), -MAX_COORDINATE_ABS, MAX_COORDINATE_ABS),
-        "z": _clamp(_to_float(value.get("z"), 0.0), -MAX_COORDINATE_ABS, MAX_COORDINATE_ABS),
+        "x": _clamp(_to_float(value.get("x"), 0.0), -MAX_HORIZONTAL_COORDINATE_ABS, MAX_HORIZONTAL_COORDINATE_ABS),
+        "y": _clamp(_to_float(value.get("y"), 0.0), -MAX_VERTICAL_COORDINATE_ABS, MAX_VERTICAL_COORDINATE_ABS),
+        "z": _clamp(_to_float(value.get("z"), 0.0), -MAX_HORIZONTAL_COORDINATE_ABS, MAX_HORIZONTAL_COORDINATE_ABS),
     }
 
 
@@ -248,6 +263,68 @@ async def _send_json_safe(websocket: WebSocket, payload: dict[str, object]) -> b
 async def _broadcast_json(websockets: list[WebSocket], payload: dict[str, object]) -> None:
     for websocket in websockets:
         await _send_json_safe(websocket, payload)
+
+
+def _room_with_presence(room: dict[str, object], room_counts: dict[str, int]) -> dict[str, object]:
+    room_id = str(room.get("id", "")).strip()
+    players = max(0, int(room_counts.get(room_id, 0))) if room_id else 0
+
+    return {
+        "id": room_id,
+        "name": room.get("name", "Room"),
+        "topic": room.get("topic", "General"),
+        "image": room.get("image", "🎭"),
+        "maxPlayers": int(room.get("maxPlayers") or 20),
+        "mapId": room.get("mapId", "futuristic-plaza"),
+        "mapModel": room.get("mapModel", "/models/futuristic_plaza.glb"),
+        "defaultYAxis": float(room.get("defaultYAxis") or 0),
+        "players": players,
+    }
+
+
+@router.get("/api/rooms")
+async def get_rooms() -> dict[str, object]:
+    try:
+        rooms = list_rooms(ROOMS_STORAGE_PATH)
+    except ValueError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    room_counts = await room_state_manager.get_room_player_counts()
+    serialized_rooms = [_room_with_presence(room, room_counts) for room in rooms]
+
+    return {
+        "rooms": serialized_rooms,
+        "totalPlayers": sum(room["players"] for room in serialized_rooms),
+    }
+
+
+@router.post("/api/rooms")
+async def create_room_endpoint(payload: CreateRoomRequest) -> dict[str, object]:
+    try:
+        room = create_room(
+            ROOMS_STORAGE_PATH,
+            name=payload.name,
+            topic=payload.topic,
+            image=payload.image,
+            max_players=payload.maxPlayers,
+            map_id=payload.mapId,
+            map_model=payload.mapModel,
+            default_y_axis=payload.defaultYAxis,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return {
+        "id": str(room["id"]),
+        "name": room["name"],
+        "topic": room["topic"],
+        "image": room["image"],
+        "maxPlayers": int(room["maxPlayers"]),
+        "mapId": room["mapId"],
+        "mapModel": room["mapModel"],
+        "defaultYAxis": float(room["defaultYAxis"]),
+        "players": 0,
+    }
 
 
 @router.get("/api/rooms/presence")

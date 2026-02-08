@@ -3,9 +3,9 @@ import { Link, useParams, useNavigate } from 'react-router-dom'
 import { useConnection, useWallet } from '@solana/wallet-adapter-react'
 import { ModelPreview } from '../components/ModelPreview'
 import { RoomScene } from '../components/room/RoomScene'
+import { fetchRooms } from '../lib/api/rooms'
 import { createRoomSocket } from '../lib/api/roomsSocket'
 import { fetchUserAdminInventory } from '../lib/api/adminItems'
-import { getRoomById, ROOMS } from '../lib/rooms/rooms'
 import { FALLBACK_IMAGE, fetchWalletDesignInventory } from '../lib/solana/inventory'
 
 const EQUIPPED_MASK_STORAGE_KEY = 'masquerade:equipped-mask'
@@ -19,6 +19,7 @@ const MASK_STROKE_TARGET_FILL = 0.92
 const MASK_STROKE_AUTO_FIT_MAX_SCALE = 10
 const MASK_STROKE_ALPHA_THRESHOLD = 30
 const MASK_STROKE_WIDTH_BOOST = 1.45
+const ROOM_LIST_REFRESH_INTERVAL_MS = 5000
 
 function percentileFromSorted(sortedValues, ratio) {
   if (!sortedValues.length) return 0
@@ -341,7 +342,7 @@ function StatusIndicator({ status }) {
   )
 }
 
-function RoomSelectorSidebar({ isOpen, onClose, currentRoomId }) {
+function RoomSelectorSidebar({ isOpen, onClose, currentRoomId, rooms }) {
   const navigate = useNavigate()
 
   return (
@@ -376,14 +377,14 @@ function RoomSelectorSidebar({ isOpen, onClose, currentRoomId }) {
           </div>
 
           <div className="flex-1 overflow-y-auto py-4">
-            {ROOMS.map((room) => {
-              const isCurrent = room.id === Number(currentRoomId)
+            {rooms.map((room) => {
+              const isCurrent = String(room.id) === String(currentRoomId)
               return (
                 <button
                   key={room.id}
                   onClick={() => {
                     if (!isCurrent) {
-                      navigate(`/rooms/${room.id}`)
+                      navigate(`/rooms/${encodeURIComponent(room.id)}`)
                     }
                     onClose()
                   }}
@@ -412,6 +413,10 @@ function RoomSelectorSidebar({ isOpen, onClose, currentRoomId }) {
                 </button>
               )
             })}
+
+            {rooms.length === 0 && (
+              <p className="px-6 py-5 text-xs text-[#555]">No rooms available.</p>
+            )}
           </div>
 
           <div className="px-6 py-4 border-t border-white/5">
@@ -433,7 +438,14 @@ function RoomSelectorSidebar({ isOpen, onClose, currentRoomId }) {
 
 function Room() {
   const { roomId } = useParams()
-  const room = useMemo(() => getRoomById(roomId), [roomId])
+  const [rooms, setRooms] = useState([])
+  const [isLoadingRooms, setIsLoadingRooms] = useState(true)
+  const room = useMemo(
+    () => rooms.find((entry) => String(entry.id) === String(roomId)) ?? null,
+    [roomId, rooms]
+  )
+  const activeRoomId = room ? String(room.id) : ''
+  const activeRoomGroundY = Number.isFinite(Number(room?.defaultYAxis)) ? Number(room.defaultYAxis) : 0
 
   const { publicKey, signMessage } = useWallet()
   const { connection } = useConnection()
@@ -465,6 +477,43 @@ function Room() {
   const chatInputRef = useRef(null)
   const chatMessagesRef = useRef(null)
   const equippedMaskRef = useRef(equippedMask)
+
+  useEffect(() => {
+    let cancelled = false
+
+    const loadRooms = async ({ initial = false } = {}) => {
+      if (initial) {
+        setIsLoadingRooms(true)
+      }
+
+      try {
+        const payload = await fetchRooms()
+        if (cancelled) return
+        setRooms(payload.rooms)
+      } catch {
+        if (cancelled) return
+        if (initial) {
+          setRooms([])
+        }
+      } finally {
+        if (initial && !cancelled) {
+          setIsLoadingRooms(false)
+        }
+      }
+    }
+
+    void loadRooms({ initial: true })
+    const timerId = window.setInterval(() => {
+      if (!cancelled) {
+        void loadRooms()
+      }
+    }, ROOM_LIST_REFRESH_INTERVAL_MS)
+
+    return () => {
+      cancelled = true
+      window.clearInterval(timerId)
+    }
+  }, [])
 
   useEffect(() => {
     equippedMaskRef.current = equippedMask
@@ -601,7 +650,7 @@ function Room() {
   }, [])
 
   useEffect(() => {
-    if (!room) return undefined
+    if (!activeRoomId) return undefined
 
     setConnectionStatus('connecting')
     setConnectionError('')
@@ -611,7 +660,7 @@ function Room() {
     setMessages([])
 
     const socket = createRoomSocket({
-      roomId: String(room.id),
+      roomId: activeRoomId,
       onMessage: handleSocketMessage,
       onOpen: () => {
         setConnectionStatus('connected')
@@ -640,7 +689,7 @@ function Room() {
           wallet: walletAddress,
           cosmeticImageData: initialCosmeticImageData,
           cosmeticAccessories: initialCosmeticAccessories,
-          position: { x: 0, y: 0, z: 0 },
+          position: { x: 0, y: activeRoomGroundY, z: 0 },
           rotationY: 0,
         })
       })
@@ -655,7 +704,7 @@ function Room() {
       socket.close()
       socketRef.current = null
     }
-  }, [displayName, handleSocketMessage, room, walletAddress])
+  }, [activeRoomGroundY, activeRoomId, displayName, handleSocketMessage, walletAddress])
 
   const refreshRoomMasks = useCallback(async () => {
     if (!publicKey) {
@@ -856,6 +905,17 @@ function Room() {
     }
   }, [messages.length, scrollChatToBottom])
 
+  if (isLoadingRooms && !room) {
+    return (
+      <div className="min-h-screen bg-[#0a0a0a] pt-28 px-6">
+        <div className="max-w-4xl mx-auto rounded-2xl bg-[#111] inner-glow p-8 text-center">
+          <h1 className="text-2xl font-serif font-light text-white mb-3 tracking-wide">Loading room...</h1>
+          <p className="text-sm font-light text-[#718096]">Syncing room list.</p>
+        </div>
+      </div>
+    )
+  }
+
   if (!room) {
     return (
       <div className="min-h-screen bg-[#0a0a0a] pt-28 px-6">
@@ -879,6 +939,7 @@ function Room() {
         isOpen={isRoomSelectorOpen}
         onClose={() => setIsRoomSelectorOpen(false)}
         currentRoomId={roomId}
+        rooms={rooms}
       />
 
       <div className="max-w-7xl mx-auto px-4 md:px-6 h-[calc(100vh-7.5rem)] flex flex-col">
@@ -913,6 +974,8 @@ function Room() {
             playersById={playersById}
             localPlayerId={localPlayerId}
             onLocalMove={handleLocalMove}
+            mapModelUrl={room.mapModel}
+            groundY={room.defaultYAxis}
           />
         </div>
 

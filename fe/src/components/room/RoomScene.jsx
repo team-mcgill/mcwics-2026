@@ -1,9 +1,9 @@
 import { useEffect, useRef } from 'react'
 import * as THREE from 'three'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
+import { DEFAULT_ROOM_MAP } from '../../lib/rooms/maps'
 
 const ROOM_HALF_SIZE = 22
-const ROOM_SCENE_MODEL_URL = '/models/futuristic_plaza.glb'
 const ROOM_SCENE_TARGET_SPAN = ROOM_HALF_SIZE * 2.25
 const MOVE_SPEED = 6
 const MOVE_ACCELERATION = 18
@@ -11,7 +11,9 @@ const MOVE_DECELERATION = 14
 const TURN_SMOOTHING = 14
 const JUMP_VELOCITY = 6.5
 const GRAVITY = 18
-const GROUND_Y = 0
+const DEFAULT_GROUND_Y = 0
+const MIN_GROUND_Y = -5000
+const MAX_GROUND_Y = 5000
 const CAMERA_FOLLOW_STIFFNESS = 8
 const CAMERA_DISTANCE = 5.7
 const CAMERA_LOOK_DISTANCE = 6.8
@@ -441,11 +443,26 @@ function fitRoomModelToScene(modelRoot) {
   })
 }
 
-export function RoomScene({ playersById, localPlayerId, onLocalMove }) {
+function resolveMapModelUrl(mapModelUrl) {
+  if (typeof mapModelUrl === 'string' && mapModelUrl.trim()) {
+    return mapModelUrl.trim()
+  }
+  return DEFAULT_ROOM_MAP.modelUrl
+}
+
+function resolveGroundY(groundY) {
+  const parsed = Number(groundY)
+  if (!Number.isFinite(parsed)) return DEFAULT_GROUND_Y
+  return clamp(parsed, MIN_GROUND_Y, MAX_GROUND_Y)
+}
+
+export function RoomScene({ playersById, localPlayerId, onLocalMove, mapModelUrl, groundY }) {
   const containerRef = useRef(null)
   const playersRef = useRef(playersById)
   const localPlayerIdRef = useRef(localPlayerId)
   const onLocalMoveRef = useRef(onLocalMove)
+  const resolvedMapModelUrl = resolveMapModelUrl(mapModelUrl)
+  const resolvedGroundY = resolveGroundY(groundY)
 
   useEffect(() => {
     playersRef.current = playersById
@@ -496,7 +513,7 @@ export function RoomScene({ playersById, localPlayerId, onLocalMove }) {
     let roomModelDisposed = false
 
     gltfLoader.load(
-      ROOM_SCENE_MODEL_URL,
+      resolvedMapModelUrl,
       (gltf) => {
         if (roomModelDisposed) return
         roomModelRoot = gltf.scene
@@ -774,7 +791,7 @@ export function RoomScene({ playersById, localPlayerId, onLocalMove }) {
       if (!avatar) return
 
       // Handle jumping
-      const isOnGround = avatar.group.position.y <= GROUND_Y
+      const isOnGround = avatar.group.position.y <= resolvedGroundY
       if (isOnGround && keyState.jump && !localMotion.isJumping) {
         localMotion.verticalVelocity = JUMP_VELOCITY
         localMotion.isJumping = true
@@ -786,8 +803,8 @@ export function RoomScene({ playersById, localPlayerId, onLocalMove }) {
         avatar.group.position.y += localMotion.verticalVelocity * deltaSeconds
 
         // Clamp to ground
-        if (avatar.group.position.y <= GROUND_Y) {
-          avatar.group.position.y = GROUND_Y
+        if (avatar.group.position.y <= resolvedGroundY) {
+          avatar.group.position.y = resolvedGroundY
           localMotion.verticalVelocity = 0
           localMotion.isJumping = false
         }
@@ -1094,7 +1111,7 @@ export function RoomScene({ playersById, localPlayerId, onLocalMove }) {
         container.removeChild(renderer.domElement)
       }
     }
-  }, [])
+  }, [resolvedGroundY, resolvedMapModelUrl])
 
   return <div ref={containerRef} className="h-full w-full" />
 }
