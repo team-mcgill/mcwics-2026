@@ -45,8 +45,8 @@ _DEFAULT_ROOMS: list[dict[str, Any]] = [
         "topic": "Romance",
         "image": "🌹",
         "maxPlayers": 30,
-        "mapId": "japanese-garden",
-        "mapModel": "/models/japanese_garden.glb",
+        "mapId": "futuristic-plaza",
+        "mapModel": "/models/futuristic_plaza.glb",
         "defaultYAxis": 0,
     },
     {
@@ -75,8 +75,8 @@ _DEFAULT_ROOMS: list[dict[str, Any]] = [
         "topic": "Fashion",
         "image": "💎",
         "maxPlayers": 60,
-        "mapId": "japanese-garden",
-        "mapModel": "/models/japanese_garden.glb",
+        "mapId": "futuristic-plaza",
+        "mapModel": "/models/futuristic_plaza.glb",
         "defaultYAxis": 0,
     },
     {

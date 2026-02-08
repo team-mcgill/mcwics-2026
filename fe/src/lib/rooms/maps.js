@@ -6,10 +6,10 @@ export const ROOM_MAPS = [
     defaultYAxis: 0,
   },
   {
-    id: 'japanese-garden',
-    name: 'Japanese Garden',
-    modelUrl: '/models/japanese_garden.glb',
-    defaultYAxis: 2.0,
+    id: 'underground-garden',
+    name: 'Underground Garden',
+    modelUrl: '/models/underground_garden.glb',
+    defaultYAxis: 0,
   },
 ]
 
