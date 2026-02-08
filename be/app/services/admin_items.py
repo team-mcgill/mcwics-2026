@@ -19,6 +19,12 @@ DEFAULT_ADMIN_ITEMS = [
         "defaultPosition": {"x": 0, "y": -40, "z": 20},
         "defaultScale": {"x": 0.6, "y": 0.6, "z": 0.6},
         "defaultRotation": {"x": 0, "y": 0, "z": 0},
+        "characterDefaultPosition": {"x": 0, "y": -24, "z": 28},
+        "characterDefaultScale": {"x": 0.28, "y": 0.28, "z": 0.28},
+        "characterDefaultRotation": {"x": 0, "y": 3.141592653589793, "z": 0},
+        "roomDefaultPosition": {"x": 0, "y": 0.12, "z": 0.02},
+        "roomDefaultScale": {"x": 1.05, "y": 1.05, "z": 1.05},
+        "roomDefaultRotation": {"x": 0, "y": 0, "z": 0},
     },
 ]
 

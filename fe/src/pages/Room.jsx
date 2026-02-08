@@ -3,6 +3,7 @@ import { Link, useParams, useNavigate } from 'react-router-dom'
 import { useConnection, useWallet } from '@solana/wallet-adapter-react'
 import { RoomScene } from '../components/room/RoomScene'
 import { createRoomSocket } from '../lib/api/roomsSocket'
+import { fetchUserAdminInventory } from '../lib/api/adminItems'
 import { getRoomById, ROOMS } from '../lib/rooms/rooms'
 import { FALLBACK_IMAGE, fetchWalletDesignInventory } from '../lib/solana/inventory'
 
@@ -48,6 +49,53 @@ function normalizeStrokeData(strokeData) {
         color: stroke.color,
         size: Math.max(1, Number(stroke.size)),
         points,
+      }
+    })
+    .filter(Boolean)
+}
+
+function normalizeVec3(input, fallback) {
+  if (!input || typeof input !== 'object') {
+    return { ...fallback }
+  }
+
+  const x = Number(input.x)
+  const y = Number(input.y)
+  const z = Number(input.z)
+
+  return {
+    x: Number.isFinite(x) ? x : fallback.x,
+    y: Number.isFinite(y) ? y : fallback.y,
+    z: Number.isFinite(z) ? z : fallback.z,
+  }
+}
+
+function normalizeAccessoryData(accessoryData) {
+  if (!Array.isArray(accessoryData)) return []
+
+  return accessoryData
+    .map((item) => {
+      if (!item || typeof item !== 'object') return null
+
+      const id = typeof item.id === 'string' ? item.id.trim() : ''
+      const modelUrl = typeof item.modelUrl === 'string' ? item.modelUrl.trim() : ''
+      if (!id || !modelUrl) return null
+
+      return {
+        id,
+        name: typeof item.name === 'string' ? item.name : id,
+        category: typeof item.category === 'string' ? item.category : 'Accessories',
+        modelUrl,
+        thumbnailUrl: typeof item.thumbnailUrl === 'string' ? item.thumbnailUrl : '',
+        defaultPosition: normalizeVec3(item.defaultPosition, { x: 0, y: 0, z: 0 }),
+        defaultScale: normalizeVec3(item.defaultScale, { x: 1, y: 1, z: 1 }),
+        defaultRotation: normalizeVec3(item.defaultRotation, { x: 0, y: 0, z: 0 }),
+        characterDefaultPosition: normalizeVec3(item.characterDefaultPosition, { x: 0, y: 0, z: 0 }),
+        characterDefaultScale: normalizeVec3(item.characterDefaultScale, { x: 1, y: 1, z: 1 }),
+        characterDefaultRotation: normalizeVec3(item.characterDefaultRotation, { x: 0, y: 0, z: 0 }),
+        roomDefaultPosition: normalizeVec3(item.roomDefaultPosition, { x: 0, y: 0, z: 0 }),
+        roomDefaultScale: normalizeVec3(item.roomDefaultScale, { x: 1, y: 1, z: 1 }),
+        roomDefaultRotation: normalizeVec3(item.roomDefaultRotation, { x: 0, y: 0, z: 0 }),
       }
     })
     .filter(Boolean)
@@ -198,6 +246,11 @@ function resolveEquippedMaskImageData(mask) {
   return ''
 }
 
+function resolveEquippedMaskAccessories(mask) {
+  if (!mask || typeof mask !== 'object') return []
+  return normalizeAccessoryData(mask.accessories)
+}
+
 function getShortWalletLabel(publicKey) {
   if (!publicKey || typeof publicKey.toBase58 !== 'function') {
     return 'Guest'
@@ -219,6 +272,7 @@ function loadEquippedMask() {
       imageData: typeof parsed.imageData === 'string' ? parsed.imageData : '',
       paintData: typeof parsed.paintData === 'string' ? parsed.paintData : '',
       strokeData: normalizeStrokeData(parsed.strokeData),
+      accessories: normalizeAccessoryData(parsed.accessories),
       name: typeof parsed.name === 'string' ? parsed.name : '',
       mintAddress: typeof parsed.mintAddress === 'string' ? parsed.mintAddress : '',
     }
@@ -238,6 +292,7 @@ function persistEquippedMask(mask) {
       imageData: typeof mask.imageData === 'string' ? mask.imageData : '',
       paintData: typeof mask.paintData === 'string' ? mask.paintData : '',
       strokeData: normalizeStrokeData(mask.strokeData),
+      accessories: normalizeAccessoryData(mask.accessories),
       name: typeof mask.name === 'string' ? mask.name : '',
       mintAddress: typeof mask.mintAddress === 'string' ? mask.mintAddress : '',
     }))
@@ -260,6 +315,7 @@ function upsertPlayer(existingState, player) {
       },
       rotationY: Number(player.rotationY ?? 0),
       cosmeticImageData: typeof player.cosmeticImageData === 'string' ? player.cosmeticImageData : '',
+      cosmeticAccessories: normalizeAccessoryData(player.cosmeticAccessories),
       chatText: existingState[player.id]?.chatText || '',
       chatExpiresAt: existingState[player.id]?.chatExpiresAt || 0,
     },
@@ -378,7 +434,7 @@ function Room() {
   const { roomId } = useParams()
   const room = useMemo(() => getRoomById(roomId), [roomId])
 
-  const { publicKey } = useWallet()
+  const { publicKey, signMessage } = useWallet()
   const { connection } = useConnection()
   const displayName = useMemo(() => getShortWalletLabel(publicKey), [publicKey])
   const walletAddress = useMemo(() => (publicKey ? publicKey.toBase58() : ''), [publicKey])
@@ -392,10 +448,16 @@ function Room() {
   const [chatInput, setChatInput] = useState('')
   const [isChangingMask, setIsChangingMask] = useState(false)
   const [availableMasks, setAvailableMasks] = useState([])
+  const [availableAccessories, setAvailableAccessories] = useState([])
   const [isLoadingMasks, setIsLoadingMasks] = useState(false)
+  const [isLoadingAccessories, setIsLoadingAccessories] = useState(false)
   const [maskLoadError, setMaskLoadError] = useState('')
+  const [accessoryLoadError, setAccessoryLoadError] = useState('')
   const [maskEquipError, setMaskEquipError] = useState('')
   const [isRoomSelectorOpen, setIsRoomSelectorOpen] = useState(false)
+  const [changeModalTab, setChangeModalTab] = useState('masks')
+  const [draftMask, setDraftMask] = useState(null)
+  const [draftAccessories, setDraftAccessories] = useState([])
 
   const socketRef = useRef(null)
   const moveSentAtRef = useRef(0)
@@ -429,6 +491,7 @@ function Room() {
             },
             rotationY: Number(player.rotationY ?? 0),
             cosmeticImageData: typeof player.cosmeticImageData === 'string' ? player.cosmeticImageData : '',
+            cosmeticAccessories: normalizeAccessoryData(player.cosmeticAccessories),
             chatText: '',
             chatExpiresAt: 0,
           }
@@ -474,6 +537,7 @@ function Room() {
           [payload.playerId]: {
             ...current,
             cosmeticImageData: typeof payload.cosmeticImageData === 'string' ? payload.cosmeticImageData : '',
+            cosmeticAccessories: normalizeAccessoryData(payload.cosmeticAccessories),
           },
         }
       })
@@ -568,10 +632,12 @@ function Room() {
       .then(() => {
         if (cancelled) return
         const initialCosmeticImageData = resolveEquippedMaskImageData(equippedMaskRef.current)
+        const initialCosmeticAccessories = resolveEquippedMaskAccessories(equippedMaskRef.current)
         socket.sendJoin({
           name: displayName,
           wallet: walletAddress,
           cosmeticImageData: initialCosmeticImageData,
+          cosmeticAccessories: initialCosmeticAccessories,
           position: { x: 0, y: 0, z: 0 },
           rotationY: 0,
         })
@@ -610,16 +676,48 @@ function Room() {
     }
   }, [connection, publicKey])
 
+  const refreshRoomAccessories = useCallback(async () => {
+    if (!publicKey || typeof signMessage !== 'function') {
+      setAvailableAccessories([])
+      setAccessoryLoadError('')
+      return
+    }
+
+    setIsLoadingAccessories(true)
+    setAccessoryLoadError('')
+
+    try {
+      const response = await fetchUserAdminInventory({ publicKey, signMessage })
+      const inventory = Array.isArray(response?.inventory) ? response.inventory : []
+      const accessories = inventory
+        .map((entry) => normalizeAccessoryData(entry?.item ? [entry.item] : [])[0])
+        .filter(Boolean)
+      setAvailableAccessories(accessories)
+    } catch {
+      setAccessoryLoadError('Failed to load official accessories.')
+      setAvailableAccessories([])
+    } finally {
+      setIsLoadingAccessories(false)
+    }
+  }, [publicKey, signMessage])
+
   useEffect(() => {
     if (!isChangingMask) return
+    setChangeModalTab('masks')
+    setDraftMask(equippedMask)
+    setDraftAccessories(resolveEquippedMaskAccessories(equippedMask))
     void refreshRoomMasks()
-  }, [isChangingMask, refreshRoomMasks])
+    void refreshRoomAccessories()
+  }, [equippedMask, isChangingMask, refreshRoomAccessories, refreshRoomMasks])
 
   const applyEquippedMask = useCallback((mask) => {
     const maskImageData = resolveEquippedMaskImageData(mask)
+    const maskAccessories = resolveEquippedMaskAccessories(mask)
     if (mask && !maskImageData) {
-      setMaskEquipError('Selected mask does not have usable texture data.')
-      return
+      if (maskAccessories.length === 0) {
+        setMaskEquipError('Selected mask does not have usable texture data.')
+        return
+      }
     }
 
     const nextMask = mask
@@ -627,6 +725,7 @@ function Room() {
         imageData: maskImageData,
         paintData: typeof mask.paintData === 'string' ? mask.paintData : '',
         strokeData: normalizeStrokeData(mask.strokeData),
+        accessories: maskAccessories,
         name: typeof mask.name === 'string' ? mask.name : '',
         mintAddress: typeof mask.mintAddress === 'string' ? mask.mintAddress : '',
       }
@@ -646,6 +745,7 @@ function Room() {
           [localPlayerId]: {
             ...current,
             cosmeticImageData: nextMask?.imageData || '',
+            cosmeticAccessories: nextMask?.accessories || [],
           },
         }
       })
@@ -653,6 +753,7 @@ function Room() {
 
     const sent = socketRef.current?.sendSetCosmetic({
       cosmeticImageData: nextMask?.imageData || '',
+      cosmeticAccessories: nextMask?.accessories || [],
     }) === true
 
     if (!sent) {
@@ -661,6 +762,44 @@ function Room() {
 
     setIsChangingMask(false)
   }, [localPlayerId])
+
+  const toggleDraftAccessory = useCallback((accessory) => {
+    if (!accessory?.id) return
+
+    setDraftAccessories((prev) => {
+      const exists = prev.some((item) => item.id === accessory.id)
+      if (exists) {
+        return prev.filter((item) => item.id !== accessory.id)
+      }
+      return [...prev, accessory]
+    })
+  }, [])
+
+  const applyDraftCosmetics = useCallback(() => {
+    const normalizedAccessories = normalizeAccessoryData(draftAccessories)
+
+    if (!draftMask && normalizedAccessories.length === 0) {
+      applyEquippedMask(null)
+      return
+    }
+
+    if (!draftMask) {
+      applyEquippedMask({
+        imageData: '',
+        paintData: '',
+        strokeData: [],
+        accessories: normalizedAccessories,
+        name: 'Accessory Loadout',
+        mintAddress: '',
+      })
+      return
+    }
+
+    applyEquippedMask({
+      ...draftMask,
+      accessories: normalizedAccessories,
+    })
+  }, [applyEquippedMask, draftAccessories, draftMask])
 
   const handleLocalMove = useCallback(({ position, rotationY }) => {
     const now = Date.now()
@@ -820,24 +959,64 @@ function Room() {
 
               {!publicKey ? (
                 <p className="text-sm text-[#718096]">Connect your wallet to load masks.</p>
-              ) : isLoadingMasks ? (
-                <p className="text-sm text-[#718096]">Loading masks...</p>
               ) : (
                 <>
-                  <div className="flex items-center gap-3 mb-4">
+                  <div className="flex items-center gap-2 mb-4">
                     <button
                       type="button"
-                      onClick={() => applyEquippedMask(null)}
+                      onClick={() => setChangeModalTab('masks')}
+                      className={`px-3 py-1.5 rounded-lg text-[11px] tracking-widest uppercase transition-all ${
+                        changeModalTab === 'masks'
+                          ? 'bg-[#d4af37] text-[#0a0a0a]'
+                          : 'border border-white/20 text-white/80 hover:bg-white/5'
+                      }`}
+                    >
+                      Masks
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setChangeModalTab('accessories')}
+                      className={`px-3 py-1.5 rounded-lg text-[11px] tracking-widest uppercase transition-all ${
+                        changeModalTab === 'accessories'
+                          ? 'bg-[#d4af37] text-[#0a0a0a]'
+                          : 'border border-white/20 text-white/80 hover:bg-white/5'
+                      }`}
+                    >
+                      Accessories
+                    </button>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-3 mb-4">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDraftMask(null)
+                        setDraftAccessories([])
+                        applyEquippedMask(null)
+                      }}
                       className="px-3 py-1.5 rounded-lg border border-red-400/30 text-red-300 text-[11px] tracking-widest uppercase hover:bg-red-500/10"
                     >
                       Unequip
                     </button>
                     <button
                       type="button"
-                      onClick={() => void refreshRoomMasks()}
+                      onClick={() => {
+                        if (changeModalTab === 'accessories') {
+                          void refreshRoomAccessories()
+                          return
+                        }
+                        void refreshRoomMasks()
+                      }}
                       className="px-3 py-1.5 rounded-lg border border-white/20 text-white/80 text-[11px] tracking-widest uppercase hover:bg-white/5"
                     >
                       Refresh
+                    </button>
+                    <button
+                      type="button"
+                      onClick={applyDraftCosmetics}
+                      className="px-3 py-1.5 rounded-lg border border-emerald-400/30 text-emerald-300 text-[11px] tracking-widest uppercase hover:bg-emerald-500/10"
+                    >
+                      Apply Cosmetic
                     </button>
                   </div>
 
@@ -845,19 +1024,28 @@ function Room() {
                     <p className="text-xs text-red-300 mb-3">{maskLoadError}</p>
                   )}
 
-                  {availableMasks.length === 0 ? (
+                  {accessoryLoadError && (
+                    <p className="text-xs text-red-300 mb-3">{accessoryLoadError}</p>
+                  )}
+
+                  {changeModalTab === 'masks' ? isLoadingMasks ? (
+                    <p className="text-sm text-[#718096]">Loading masks...</p>
+                  ) : availableMasks.length === 0 ? (
                     <p className="text-sm text-[#718096]">No masks found in your devnet inventory.</p>
                   ) : (
                     <div className="max-h-[56vh] overflow-y-auto grid grid-cols-2 md:grid-cols-3 gap-3">
                       {availableMasks.map((mask) => {
-                        const isEquipped = Boolean(equippedMask?.mintAddress) && equippedMask.mintAddress === mask.mintAddress
+                        const isSelected = (
+                          (draftMask?.mintAddress && draftMask.mintAddress === mask.mintAddress)
+                          || (draftMask?.id && draftMask.id === mask.id)
+                        )
 
                         return (
                           <button
                             key={mask.id}
                             type="button"
-                            onClick={() => applyEquippedMask(mask)}
-                            className={`text-left rounded-xl overflow-hidden border transition-colors ${isEquipped ? 'border-[#d4af37]/70' : 'border-white/10 hover:border-[#d4af37]/30'}`}
+                            onClick={() => setDraftMask(mask)}
+                            className={`text-left rounded-xl overflow-hidden border transition-colors ${isSelected ? 'border-[#d4af37]/70' : 'border-white/10 hover:border-[#d4af37]/30'}`}
                           >
                             <div className="aspect-square bg-[#1a1a1a]">
                               <img
@@ -872,7 +1060,43 @@ function Room() {
                             <div className="px-2.5 py-2">
                               <p className="text-xs text-white truncate">{mask.name || 'Untitled mask'}</p>
                               <p className="text-[10px] text-[#8b7355] mt-1 tracking-widest uppercase">
-                                {isEquipped ? 'Equipped' : 'Equip'}
+                                {isSelected ? 'Selected' : 'Select'}
+                              </p>
+                            </div>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  ) : isLoadingAccessories ? (
+                    <p className="text-sm text-[#718096]">Loading accessories...</p>
+                  ) : availableAccessories.length === 0 ? (
+                    <p className="text-sm text-[#718096]">No official accessories owned yet.</p>
+                  ) : (
+                    <div className="max-h-[56vh] overflow-y-auto grid grid-cols-2 md:grid-cols-3 gap-3">
+                      {availableAccessories.map((accessory) => {
+                        const isSelected = draftAccessories.some((item) => item.id === accessory.id)
+
+                        return (
+                          <button
+                            key={accessory.id}
+                            type="button"
+                            onClick={() => toggleDraftAccessory(accessory)}
+                            className={`text-left rounded-xl overflow-hidden border transition-colors ${isSelected ? 'border-emerald-400/70' : 'border-white/10 hover:border-emerald-400/30'}`}
+                          >
+                            <div className="aspect-square bg-[#1a1a1a]">
+                              <img
+                                src={accessory.thumbnailUrl || FALLBACK_IMAGE}
+                                alt={accessory.name || 'Accessory'}
+                                onError={(event) => {
+                                  event.currentTarget.src = FALLBACK_IMAGE
+                                }}
+                                className="w-full h-full object-cover"
+                              />
+                            </div>
+                            <div className="px-2.5 py-2">
+                              <p className="text-xs text-white truncate">{accessory.name || 'Accessory'}</p>
+                              <p className="text-[10px] text-[#8b7355] mt-1 tracking-widest uppercase">
+                                {isSelected ? 'Selected' : 'Select'}
                               </p>
                             </div>
                           </button>

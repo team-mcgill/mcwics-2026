@@ -127,12 +127,13 @@ export async function uploadDesignMetadataWithWalletAuth({
   name,
   imageData,
   strokeData,
+  accessoryData,
 }) {
   return postWithWalletAuth({
     publicKey,
     signMessage,
     path: '/api/designs/upload',
-    body: { name, imageData, strokeData },
+    body: { name, imageData, strokeData, accessoryData },
   })
 }
 
@@ -143,12 +144,13 @@ export async function updateDesignMetadataWithWalletAuth({
   name,
   imageData,
   strokeData,
+  accessoryData,
 }) {
   return postWithWalletAuth({
     publicKey,
     signMessage,
     path: '/api/designs/update',
-    body: { metadataUri, name, imageData, strokeData },
+    body: { metadataUri, name, imageData, strokeData, accessoryData },
   })
 }
 

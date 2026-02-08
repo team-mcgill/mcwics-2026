@@ -27,6 +27,8 @@ const AVATAR_HEAD_RADIUS = 0.43
 const AVATAR_HEAD_CENTER_Y = 2.0
 const AVATAR_NAME_LABEL_Y = 3.05
 const AVATAR_CHAT_LABEL_Y = 3.58
+const AVATAR_ACCESSORY_MAX_COUNT = 8
+const AVATAR_ACCESSORY_TARGET_HEIGHT = 0.95
 const MOVEMENT_CODE_TO_DIRECTION = {
   KeyW: 'forward',
   KeyA: 'left',
@@ -236,6 +238,112 @@ function createCosmeticOverlay(imageData) {
   return mesh
 }
 
+function normalizeAccessoryVec3(value, fallback) {
+  if (!value || typeof value !== 'object') {
+    return { ...fallback }
+  }
+
+  const x = Number(value.x)
+  const y = Number(value.y)
+  const z = Number(value.z)
+
+  return {
+    x: Number.isFinite(x) ? x : fallback.x,
+    y: Number.isFinite(y) ? y : fallback.y,
+    z: Number.isFinite(z) ? z : fallback.z,
+  }
+}
+
+function getAccessorySignature(accessory) {
+  if (!accessory || typeof accessory !== 'object') return ''
+
+  const id = typeof accessory.id === 'string' ? accessory.id : ''
+  const modelUrl = typeof accessory.modelUrl === 'string' ? accessory.modelUrl : ''
+  const p = normalizeAccessoryVec3(accessory.roomDefaultPosition ?? accessory.defaultPosition, { x: 0, y: 0, z: 0 })
+  const s = normalizeAccessoryVec3(accessory.roomDefaultScale ?? accessory.defaultScale, { x: 1, y: 1, z: 1 })
+  const r = normalizeAccessoryVec3(accessory.roomDefaultRotation ?? accessory.defaultRotation, { x: 0, y: 0, z: 0 })
+
+  return [
+    id,
+    modelUrl,
+    p.x.toFixed(4), p.y.toFixed(4), p.z.toFixed(4),
+    s.x.toFixed(4), s.y.toFixed(4), s.z.toFixed(4),
+    r.x.toFixed(4), r.y.toFixed(4), r.z.toFixed(4),
+  ].join('|')
+}
+
+function getAccessoryRoomTransform(accessory) {
+  const position = normalizeAccessoryVec3(
+    accessory?.roomDefaultPosition ?? accessory?.defaultPosition,
+    { x: 0, y: 0, z: 0 }
+  )
+  const scale = normalizeAccessoryVec3(
+    accessory?.roomDefaultScale ?? accessory?.defaultScale,
+    { x: 1, y: 1, z: 1 }
+  )
+  const rotation = normalizeAccessoryVec3(
+    accessory?.roomDefaultRotation ?? accessory?.defaultRotation,
+    { x: 0, y: 0, z: 0 }
+  )
+
+  return {
+    position: {
+      x: clamp(position.x, -3, 3),
+      y: clamp(position.y, -3, 3),
+      z: clamp(position.z, -3, 3),
+    },
+    scale: {
+      x: clamp(Math.abs(scale.x), 0.05, 8),
+      y: clamp(Math.abs(scale.y), 0.05, 8),
+      z: clamp(Math.abs(scale.z), 0.05, 8),
+    },
+    rotation: {
+      x: clamp(rotation.x, -Math.PI * 2, Math.PI * 2),
+      y: clamp(rotation.y, -Math.PI * 2, Math.PI * 2),
+      z: clamp(rotation.z, -Math.PI * 2, Math.PI * 2),
+    },
+  }
+}
+
+function getAccessoryTargetHeight(accessory) {
+  const category = typeof accessory?.category === 'string' ? accessory.category.toLowerCase() : ''
+  const name = typeof accessory?.name === 'string' ? accessory.name.toLowerCase() : ''
+
+  if (category.includes('head') || name.includes('helmet') || name.includes('crown')) {
+    return 1.1
+  }
+
+  if (category.includes('face') || name.includes('mask')) {
+    return 0.7
+  }
+
+  return AVATAR_ACCESSORY_TARGET_HEIGHT
+}
+
+function fitAccessoryToAvatarHead(modelRoot, accessory) {
+  modelRoot.updateMatrixWorld(true)
+  const box = new THREE.Box3().setFromObject(modelRoot)
+  const size = new THREE.Vector3()
+  box.getSize(size)
+
+  const baseHeight = Math.max(0.001, size.y)
+  const targetHeight = getAccessoryTargetHeight(accessory)
+
+  const transform = getAccessoryRoomTransform(accessory)
+  const scaleMultiplier = (transform.scale.x + transform.scale.y + transform.scale.z) / 3
+  const uniformScale = (targetHeight / baseHeight) * scaleMultiplier
+
+  modelRoot.scale.setScalar(uniformScale)
+  modelRoot.position.set(transform.position.x, transform.position.y, transform.position.z)
+  modelRoot.rotation.set(transform.rotation.x, transform.rotation.y, transform.rotation.z)
+
+  modelRoot.traverse((child) => {
+    if (!child.isMesh) return
+    child.castShadow = true
+    child.receiveShadow = true
+  })
+}
+
 function disposeObject3D(object3D) {
   object3D.traverse((child) => {
     if (child.material) {
@@ -393,6 +501,104 @@ export function RoomScene({ playersById, localPlayerId, onLocalMove }) {
       }
     )
 
+    const accessoryLoader = new GLTFLoader()
+    let accessoryLoadNonce = 0
+
+    const removeAvatarAccessory = (avatar, accessoryId) => {
+      const existing = avatar.accessoryEntries.get(accessoryId)
+      if (!existing) return
+
+      existing.root.removeFromParent()
+      disposeObject3D(existing.root)
+      avatar.accessoryEntries.delete(accessoryId)
+      avatar.accessoryLoadTokens.delete(accessoryId)
+    }
+
+    const clearAvatarAccessories = (avatar) => {
+      Array.from(avatar.accessoryEntries.keys()).forEach((accessoryId) => {
+        removeAvatarAccessory(avatar, accessoryId)
+      })
+      avatar.accessoryLoadTokens.clear()
+    }
+
+    const loadAccessoryOnAvatar = (avatar, accessory) => {
+      const accessoryId = accessory.id
+      const modelUrl = accessory.modelUrl
+      if (!accessoryId || !modelUrl) return
+
+      const signature = getAccessorySignature(accessory)
+      const existing = avatar.accessoryEntries.get(accessoryId)
+      if (existing && existing.signature === signature) {
+        return
+      }
+
+      const pending = avatar.accessoryLoadTokens.get(accessoryId)
+      if (pending && pending.signature === signature) {
+        return
+      }
+
+      removeAvatarAccessory(avatar, accessoryId)
+
+      accessoryLoadNonce += 1
+      const token = `${accessoryId}-${accessoryLoadNonce}`
+      avatar.accessoryLoadTokens.set(accessoryId, { token, signature })
+
+      accessoryLoader.load(
+        modelUrl,
+        (gltf) => {
+          if (avatar.disposed) {
+            disposeObject3D(gltf.scene)
+            return
+          }
+
+          const pendingState = avatar.accessoryLoadTokens.get(accessoryId)
+          if (!pendingState || pendingState.token !== token) {
+            disposeObject3D(gltf.scene)
+            return
+          }
+
+          avatar.accessoryLoadTokens.delete(accessoryId)
+
+          const modelRoot = gltf.scene
+          fitAccessoryToAvatarHead(modelRoot, accessory)
+          avatar.headAnchor.add(modelRoot)
+
+          avatar.accessoryEntries.set(accessoryId, {
+            id: accessoryId,
+            signature,
+            root: modelRoot,
+          })
+        },
+        undefined,
+        () => {
+          avatar.accessoryLoadTokens.delete(accessoryId)
+        }
+      )
+    }
+
+    const syncAvatarAccessories = (avatar, accessories) => {
+      const nextList = Array.isArray(accessories) ? accessories.slice(0, AVATAR_ACCESSORY_MAX_COUNT) : []
+      const nextIds = new Set()
+
+      nextList.forEach((item) => {
+        if (!item || typeof item.id !== 'string' || typeof item.modelUrl !== 'string') {
+          return
+        }
+        if (!item.id || !item.modelUrl) {
+          return
+        }
+
+        nextIds.add(item.id)
+        loadAccessoryOnAvatar(avatar, item)
+      })
+
+      Array.from(avatar.accessoryEntries.keys()).forEach((accessoryId) => {
+        if (!nextIds.has(accessoryId)) {
+          removeAvatarAccessory(avatar, accessoryId)
+        }
+      })
+    }
+
     const avatars = new Map()
     const localMotion = {
       velocity: new THREE.Vector2(0, 0),
@@ -461,7 +667,7 @@ export function RoomScene({ playersById, localPlayerId, onLocalMove }) {
       }
 
       scene.add(group)
-      avatars.set(player.id, {
+      const avatarState = {
         id: player.id,
         group,
         headAnchor,
@@ -471,12 +677,20 @@ export function RoomScene({ playersById, localPlayerId, onLocalMove }) {
         chatSignature: '',
         cosmeticOverlay,
         cosmeticKey,
-      })
+        accessoryEntries: new Map(),
+        accessoryLoadTokens: new Map(),
+        disposed: false,
+      }
+
+      avatars.set(player.id, avatarState)
+      syncAvatarAccessories(avatarState, player.cosmeticAccessories)
     }
 
     const removeAvatar = (playerId) => {
       const avatar = avatars.get(playerId)
       if (!avatar) return
+
+      avatar.disposed = true
 
       avatar.nameSprite.material.map?.dispose()
       avatar.nameSprite.material.dispose?.()
@@ -486,6 +700,8 @@ export function RoomScene({ playersById, localPlayerId, onLocalMove }) {
       if (avatar.cosmeticOverlay) {
         disposeObject3D(avatar.cosmeticOverlay)
       }
+
+      clearAvatarAccessories(avatar)
 
       scene.remove(avatar.group)
       disposeObject3D(avatar.group)
@@ -530,6 +746,8 @@ export function RoomScene({ playersById, localPlayerId, onLocalMove }) {
             }
           }
         }
+
+        syncAvatarAccessories(avatar, player.cosmeticAccessories)
       })
 
       Array.from(avatars.keys()).forEach((playerId) => {

@@ -57,11 +57,12 @@ export function createRoomSocket({ roomId, onMessage, onOpen, onClose, onError }
 
   return {
     connect,
-    sendJoin: ({ name, wallet, cosmeticImageData, position = { x: 0, y: 0, z: 0 }, rotationY = 0 }) => send({
+    sendJoin: ({ name, wallet, cosmeticImageData, cosmeticAccessories = [], position = { x: 0, y: 0, z: 0 }, rotationY = 0 }) => send({
       type: 'join',
       name,
       wallet,
       cosmeticImageData,
+      cosmeticAccessories,
       position,
       rotationY,
     }),
@@ -74,9 +75,10 @@ export function createRoomSocket({ roomId, onMessage, onOpen, onClose, onError }
       type: 'chat',
       text,
     }),
-    sendSetCosmetic: ({ cosmeticImageData }) => send({
+    sendSetCosmetic: ({ cosmeticImageData, cosmeticAccessories = [] }) => send({
       type: 'set_cosmetic',
       cosmeticImageData,
+      cosmeticAccessories,
     }),
     close: () => {
       if (socket && socket.readyState <= WebSocket.OPEN) {

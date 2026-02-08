@@ -12,6 +12,79 @@ const VIDEO_FPS = 24;
 const MAX_PIXEL_RATIO = 1.5;
 
 const DEFAULT_TEX_SIZE = 2048;
+const ACCESSORY_TARGET_HEIGHT_RATIO = 0.82;
+const ACCESSORY_MIN_TARGET_HEIGHT = 190;
+const ACCESSORY_SCALE_MULTIPLIER_MIN = 0.2;
+const ACCESSORY_SCALE_MULTIPLIER_MAX = 4;
+const ACCESSORY_BASE_SCALE_BOOST = 2.50;
+const ACCESSORY_DYNAMIC_SCALE_MIN = 0.58;
+const ACCESSORY_DYNAMIC_SCALE_MAX = 3.15;
+const ACCESSORY_DYNAMIC_SCALE_SMOOTHING = 0.56;
+const ACCESSORY_ROTATION_SMOOTHING = 0.22;
+const ACCESSORY_POSITION_SMOOTHING = 0.38;
+const ACCESSORY_DYNAMIC_SCALE_EXPONENT = 1.52;
+const ACCESSORY_DYNAMIC_SCALE_WIDTH_WEIGHT = 0.62;
+const ACCESSORY_DYNAMIC_SCALE_HEIGHT_WEIGHT = 0.38;
+const ACCESSORY_FORWARD_Y_OFFSET = Math.PI;
+const CHARACTER_AMBIENT_LIGHT_INTENSITY = 0.38;
+const CHARACTER_DIRECTIONAL_LIGHT_INTENSITY = 0.52;
+
+const FACE_LANDMARKS = {
+  noseTip: 1,
+  forehead: 10,
+  leftEyeOuter: 33,
+  rightEyeOuter: 263,
+  leftCheek: 234,
+  rightCheek: 454,
+  chin: 152,
+};
+
+function getLandmark(landmarks, index) {
+  const lm = landmarks?.[index];
+  if (!lm) return null;
+
+  if (!Number.isFinite(lm.x) || !Number.isFinite(lm.y) || !Number.isFinite(lm.z)) {
+    return null;
+  }
+
+  return lm;
+}
+
+function disposeObject3D(root) {
+  if (!root || typeof root.traverse !== 'function') return;
+
+  root.traverse((obj) => {
+    if (obj.geometry && typeof obj.geometry.dispose === 'function') {
+      obj.geometry.dispose();
+    }
+
+    if (!obj.material) return;
+
+    const materials = Array.isArray(obj.material) ? obj.material : [obj.material];
+    materials.forEach((material) => {
+      if (!material) return;
+      if (typeof material.dispose === 'function') {
+        material.dispose();
+      }
+    });
+  });
+}
+
+function normalizeAccessoryVec3(input, fallback) {
+  if (!input || typeof input !== 'object') {
+    return { ...fallback };
+  }
+
+  const x = Number(input.x);
+  const y = Number(input.y);
+  const z = Number(input.z);
+
+  return {
+    x: Number.isFinite(x) ? x : fallback.x,
+    y: Number.isFinite(y) ? y : fallback.y,
+    z: Number.isFinite(z) ? z : fallback.z,
+  };
+}
 
 export const FaceMeshPainter = forwardRef(function FaceMeshPainter(props, ref) {
   const videoRef = useRef(null);
@@ -85,6 +158,9 @@ export const FaceMeshPainter = forwardRef(function FaceMeshPainter(props, ref) {
   // Accessory management refs
   const accessoriesRef = useRef(new Map());
   const gltfLoaderRef = useRef(new GLTFLoader());
+  const accessoryLoadVersionRef = useRef(new Map());
+  const faceWidthBaselineRef = useRef(0);
+  const faceHeightBaselineRef = useRef(0);
 
   const getScaledBrushWidth = useCallback((size) => {
     const { width } = renderSizeRef.current;
@@ -100,37 +176,138 @@ export const FaceMeshPainter = forwardRef(function FaceMeshPainter(props, ref) {
     renderer.render(scene, camera);
   }, []);
 
+  const removeAccessoryModel = useCallback((itemId, { dispose = false } = {}) => {
+    const scene = sceneRef.current;
+    const existing = accessoriesRef.current.get(itemId);
+    if (!existing) return;
+
+    if (scene) {
+      scene.remove(existing);
+    }
+
+    accessoriesRef.current.delete(itemId);
+    if (dispose) {
+      disposeObject3D(existing);
+    }
+  }, []);
+
+  const estimateFacePose = useCallback((landmarks) => {
+    const leftEye = getLandmark(landmarks, FACE_LANDMARKS.leftEyeOuter);
+    const rightEye = getLandmark(landmarks, FACE_LANDMARKS.rightEyeOuter);
+    const nose = getLandmark(landmarks, FACE_LANDMARKS.noseTip);
+    const chin = getLandmark(landmarks, FACE_LANDMARKS.chin);
+    const forehead = getLandmark(landmarks, FACE_LANDMARKS.forehead);
+    const leftCheek = getLandmark(landmarks, FACE_LANDMARKS.leftCheek);
+    const rightCheek = getLandmark(landmarks, FACE_LANDMARKS.rightCheek);
+
+    if (!leftEye || !rightEye || !nose || !chin || !forehead || !leftCheek || !rightCheek) {
+      return null;
+    }
+
+    const eyeDx = rightEye.x - leftEye.x;
+    const eyeDy = rightEye.y - leftEye.y;
+    const eyeDistance = Math.max(0.0001, Math.hypot(eyeDx, eyeDy));
+    const eyeCenterX = (leftEye.x + rightEye.x) * 0.5;
+    const eyeCenterY = (leftEye.y + rightEye.y) * 0.5;
+
+    const rollRaw = Math.atan2(eyeDy, eyeDx);
+
+    const yawNumerator = nose.x - eyeCenterX;
+    const yawNormalized = THREE.MathUtils.clamp(yawNumerator / (eyeDistance * 0.7), -1, 1);
+    const yawRaw = yawNormalized * 0.9;
+
+    const upperFace = Math.max(0.0001, nose.y - eyeCenterY);
+    const lowerFace = Math.max(0.0001, chin.y - nose.y);
+    const pitchRatio = THREE.MathUtils.clamp((upperFace - lowerFace) / (upperFace + lowerFace), -1, 1);
+    const zPitch = THREE.MathUtils.clamp((forehead.z - chin.z) * 2.2, -1, 1);
+    const pitchRaw = (pitchRatio * 0.6 + zPitch * 0.4) * 0.85;
+
+    const faceWidth = Math.max(0.0001, Math.abs(rightCheek.x - leftCheek.x));
+    const faceHeight = Math.max(0.0001, Math.abs(chin.y - forehead.y));
+
+    return {
+      yaw: yawRaw,
+      pitch: -pitchRaw,
+      roll: -rollRaw,
+      faceWidth,
+      faceHeight,
+    };
+  }, []);
+
   const loadAccessory = useCallback(async (itemId, modelUrl, transform = {}) => {
     const scene = sceneRef.current;
     if (!scene) return null;
 
-    // Remove existing if any
-    if (accessoriesRef.current.has(itemId)) {
-      const existing = accessoriesRef.current.get(itemId);
-      scene.remove(existing);
-      accessoriesRef.current.delete(itemId);
-    }
+    const loadVersion = (accessoryLoadVersionRef.current.get(itemId) || 0) + 1;
+    accessoryLoadVersionRef.current.set(itemId, loadVersion);
+
+    removeAccessoryModel(itemId, { dispose: false });
 
     try {
       const gltf = await new Promise((resolve, reject) => {
         gltfLoaderRef.current.load(modelUrl, resolve, undefined, reject);
       });
 
+      const stillCurrent = accessoryLoadVersionRef.current.get(itemId) === loadVersion;
       const model = gltf.scene;
 
-      // Apply default transform
-      const defaultPos = transform.defaultPosition || { x: 0, y: 0, z: 0 };
-      const defaultScale = transform.defaultScale || { x: 1, y: 1, z: 1 };
-      const defaultRot = transform.defaultRotation || { x: 0, y: 0, z: 0 };
+      if (!stillCurrent) {
+        return null;
+      }
+
+      const characterDefaultPosition = transform.characterDefaultPosition ?? transform.defaultPosition;
+      const characterDefaultScale = transform.characterDefaultScale ?? transform.defaultScale;
+      const characterDefaultRotation = transform.characterDefaultRotation ?? transform.defaultRotation;
+
+      const defaultPosRaw = normalizeAccessoryVec3(characterDefaultPosition, { x: 0, y: -16, z: 30 });
+      const defaultScaleRaw = normalizeAccessoryVec3(characterDefaultScale, { x: 1, y: 1, z: 1 });
+      const defaultRot = normalizeAccessoryVec3(characterDefaultRotation, { x: 0, y: 0, z: 0 });
+
+      const defaultScale = {
+        x: THREE.MathUtils.clamp(Math.abs(defaultScaleRaw.x), ACCESSORY_SCALE_MULTIPLIER_MIN, ACCESSORY_SCALE_MULTIPLIER_MAX),
+        y: THREE.MathUtils.clamp(Math.abs(defaultScaleRaw.y), ACCESSORY_SCALE_MULTIPLIER_MIN, ACCESSORY_SCALE_MULTIPLIER_MAX),
+        z: THREE.MathUtils.clamp(Math.abs(defaultScaleRaw.z), ACCESSORY_SCALE_MULTIPLIER_MIN, ACCESSORY_SCALE_MULTIPLIER_MAX),
+      };
+
+      const initialBox = new THREE.Box3().setFromObject(model);
+      const initialSize = new THREE.Vector3();
+      initialBox.getSize(initialSize);
+      const modelHeight = Math.max(0.001, initialSize.y);
+
+      const { width, height } = renderSizeRef.current;
+      const targetHeight = Math.max(ACCESSORY_MIN_TARGET_HEIGHT, height * ACCESSORY_TARGET_HEIGHT_RATIO);
+      const fitScale = targetHeight / modelHeight;
+
+      const baseScale = {
+        x: fitScale * defaultScale.x * ACCESSORY_BASE_SCALE_BOOST,
+        y: fitScale * defaultScale.y * ACCESSORY_BASE_SCALE_BOOST,
+        z: fitScale * defaultScale.z * ACCESSORY_BASE_SCALE_BOOST,
+      };
+
+      model.scale.set(baseScale.x, baseScale.y, baseScale.z);
+      const baseRotation = {
+        x: defaultRot.x,
+        y: defaultRot.y + ACCESSORY_FORWARD_Y_OFFSET,
+        z: defaultRot.z,
+      };
+      model.rotation.set(baseRotation.x, baseRotation.y, baseRotation.z);
+
+      const defaultPos = {
+        x: THREE.MathUtils.clamp(defaultPosRaw.x, -width * 0.45, width * 0.45),
+        y: THREE.MathUtils.clamp(defaultPosRaw.y, -height * 0.45, height * 0.45),
+        z: THREE.MathUtils.clamp(defaultPosRaw.z, -900, 900),
+      };
 
       model.position.set(defaultPos.x, defaultPos.y, defaultPos.z);
-      model.scale.set(defaultScale.x, defaultScale.y, defaultScale.z);
-      model.rotation.set(defaultRot.x, defaultRot.y, defaultRot.z);
 
-      // Store original transform for face tracking updates
       model.userData = {
         itemId,
         originalTransform: { ...defaultPos },
+        baseScale: { ...baseScale },
+        baseRotation,
+        smoothedPosition: { ...defaultPos },
+        smoothedRotation: { x: 0, y: 0, z: 0 },
+        smoothedScaleFactor: 1,
       };
 
       scene.add(model);
@@ -138,22 +315,19 @@ export const FaceMeshPainter = forwardRef(function FaceMeshPainter(props, ref) {
       renderScene();
       return model;
     } catch (err) {
-      console.error('Failed to load accessory:', err);
+      if (accessoryLoadVersionRef.current.get(itemId) === loadVersion) {
+        console.error('Failed to load accessory:', err);
+      }
       return null;
     }
-  }, [renderScene]);
+  }, [removeAccessoryModel, renderScene]);
 
   const unloadAccessory = useCallback((itemId) => {
-    const scene = sceneRef.current;
-    if (!scene) return;
-
-    if (accessoriesRef.current.has(itemId)) {
-      const model = accessoriesRef.current.get(itemId);
-      scene.remove(model);
-      accessoriesRef.current.delete(itemId);
-      renderScene();
-    }
-  }, [renderScene]);
+    const nextVersion = (accessoryLoadVersionRef.current.get(itemId) || 0) + 1;
+    accessoryLoadVersionRef.current.set(itemId, nextVersion);
+    removeAccessoryModel(itemId, { dispose: false });
+    renderScene();
+  }, [removeAccessoryModel, renderScene]);
 
   const toggleAccessory = useCallback(async (itemId, isEquipped, itemData = null) => {
     if (isEquipped) {
@@ -162,6 +336,9 @@ export const FaceMeshPainter = forwardRef(function FaceMeshPainter(props, ref) {
           defaultPosition: itemData.defaultPosition,
           defaultScale: itemData.defaultScale,
           defaultRotation: itemData.defaultRotation,
+          characterDefaultPosition: itemData.characterDefaultPosition,
+          characterDefaultScale: itemData.characterDefaultScale,
+          characterDefaultRotation: itemData.characterDefaultRotation,
         });
       }
     } else {
@@ -172,26 +349,84 @@ export const FaceMeshPainter = forwardRef(function FaceMeshPainter(props, ref) {
   const updateAccessoryPositions = useCallback((landmarks) => {
     if (!landmarks || accessoriesRef.current.size === 0) return;
 
-    // Use forehead/nose bridge area as anchor (landmarks around 10-168)
-    const anchorIndex = 10; // Forehead center
-    const anchor = landmarks[anchorIndex];
+    const anchor = getLandmark(landmarks, FACE_LANDMARKS.forehead);
     if (!anchor) return;
+
+    const pose = estimateFacePose(landmarks);
+    if (!pose) return;
+
+    const baseline = faceWidthBaselineRef.current;
+    if (!baseline || !Number.isFinite(baseline)) {
+      faceWidthBaselineRef.current = pose.faceWidth;
+    }
+    const heightBaseline = faceHeightBaselineRef.current;
+    if (!heightBaseline || !Number.isFinite(heightBaseline)) {
+      faceHeightBaselineRef.current = pose.faceHeight;
+    }
+
+    const normalizedWidthBaseline = Math.max(0.0001, faceWidthBaselineRef.current || pose.faceWidth);
+    const normalizedHeightBaseline = Math.max(0.0001, faceHeightBaselineRef.current || pose.faceHeight);
+    const widthRatio = pose.faceWidth / normalizedWidthBaseline;
+    const heightRatio = pose.faceHeight / normalizedHeightBaseline;
+    const blendedRatio = (widthRatio * ACCESSORY_DYNAMIC_SCALE_WIDTH_WEIGHT)
+      + (heightRatio * ACCESSORY_DYNAMIC_SCALE_HEIGHT_WEIGHT);
+
+    const rawScaleFactor = Math.pow(Math.max(0.0001, blendedRatio), ACCESSORY_DYNAMIC_SCALE_EXPONENT);
+    const targetScaleFactor = THREE.MathUtils.clamp(rawScaleFactor, ACCESSORY_DYNAMIC_SCALE_MIN, ACCESSORY_DYNAMIC_SCALE_MAX);
 
     const { width, height } = renderSizeRef.current;
 
     accessoriesRef.current.forEach((model) => {
       const basePos = model.userData.originalTransform;
+      const baseRot = model.userData.baseRotation || { x: 0, y: 0, z: 0 };
+      const baseScale = model.userData.baseScale || { x: model.scale.x, y: model.scale.y, z: model.scale.z };
+      const smoothedPosition = model.userData.smoothedPosition || { ...basePos };
+      const smoothedRotation = model.userData.smoothedRotation || { x: 0, y: 0, z: 0 };
+      const previousScale = Number.isFinite(model.userData.smoothedScaleFactor)
+        ? model.userData.smoothedScaleFactor
+        : 1;
 
-      // Convert anchor to screen space and apply offset
       const anchorX = (anchor.x * width) - (width / 2);
       const anchorY = -((anchor.y * height) - (height / 2));
 
-      model.position.x = anchorX + (basePos.x || 0);
-      model.position.y = anchorY + (basePos.y || 0);
+      const targetX = anchorX + (basePos.x || 0);
+      const targetY = anchorY + (basePos.y || 0);
+      const targetZ = basePos.z || 0;
+
+      smoothedPosition.x += (targetX - smoothedPosition.x) * ACCESSORY_POSITION_SMOOTHING;
+      smoothedPosition.y += (targetY - smoothedPosition.y) * ACCESSORY_POSITION_SMOOTHING;
+      smoothedPosition.z += (targetZ - smoothedPosition.z) * ACCESSORY_POSITION_SMOOTHING;
+
+      const targetYaw = pose.yaw;
+      const targetPitch = pose.pitch;
+      const targetRoll = pose.roll;
+
+      smoothedRotation.y += (targetYaw - smoothedRotation.y) * ACCESSORY_ROTATION_SMOOTHING;
+      smoothedRotation.x += (targetPitch - smoothedRotation.x) * ACCESSORY_ROTATION_SMOOTHING;
+      smoothedRotation.z += (targetRoll - smoothedRotation.z) * ACCESSORY_ROTATION_SMOOTHING;
+
+      const smoothedScaleFactor = previousScale
+        + (targetScaleFactor - previousScale) * ACCESSORY_DYNAMIC_SCALE_SMOOTHING;
+
+      model.position.set(smoothedPosition.x, smoothedPosition.y, smoothedPosition.z);
+      model.rotation.set(
+        baseRot.x + smoothedRotation.x,
+        baseRot.y + smoothedRotation.y,
+        baseRot.z + smoothedRotation.z,
+      );
+      model.scale.set(
+        baseScale.x * smoothedScaleFactor,
+        baseScale.y * smoothedScaleFactor,
+        baseScale.z * smoothedScaleFactor,
+      );
+
+      model.userData.smoothedPosition = smoothedPosition;
+      model.userData.smoothedRotation = smoothedRotation;
+      model.userData.smoothedScaleFactor = smoothedScaleFactor;
     });
 
     renderScene();
-  }, [renderScene]);
+  }, [estimateFacePose, renderScene]);
 
   const drawStrokeList = useCallback((strokes) => {
     const ctx = paintCtxRef.current;
@@ -356,6 +591,13 @@ export const FaceMeshPainter = forwardRef(function FaceMeshPainter(props, ref) {
         const scene = new THREE.Scene();
         sceneRef.current = scene;
 
+        const ambientLight = new THREE.AmbientLight(0xffffff, CHARACTER_AMBIENT_LIGHT_INTENSITY);
+        scene.add(ambientLight);
+
+        const directionalLight = new THREE.DirectionalLight(0xffffff, CHARACTER_DIRECTIONAL_LIGHT_INTENSITY);
+        directionalLight.position.set(0.8, 1.2, 1.6);
+        scene.add(directionalLight);
+
         const { width: initialWidth, height: initialHeight } = renderSizeRef.current;
         const camera = new THREE.OrthographicCamera(
           -initialWidth / 2,
@@ -519,11 +761,23 @@ export const FaceMeshPainter = forwardRef(function FaceMeshPainter(props, ref) {
       geom?.dispose();
       geometryRef.current = null;
 
+      accessoriesRef.current.forEach((model, itemId) => {
+        removeAccessoryModel(itemId, { dispose: false });
+        if (model?.parent) {
+          model.parent.remove(model);
+        }
+        disposeObject3D(model);
+      });
+      accessoriesRef.current.clear();
+      accessoryLoadVersionRef.current.clear();
+      faceWidthBaselineRef.current = 0;
+      faceHeightBaselineRef.current = 0;
+
       const r = rendererRef.current;
       r?.dispose();
       rendererRef.current = null;
     };
-  }, [paintCanvas, updateRenderSize, renderScene]);
+  }, [paintCanvas, removeAccessoryModel, updateRenderSize, renderScene]);
 
   const getUvFromPointerEvent = useCallback((e) => {
     const canvas = webglCanvasRef.current;

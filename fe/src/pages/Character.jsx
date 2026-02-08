@@ -21,17 +21,22 @@ function Character() {
   const hasPersistedEquipRef = useRef(false)
   const marketplaceConfigRef = useRef(null)
   const [activeDesign, setActiveDesign] = useState(null)
-  const [activeAccessories, setActiveAccessories] = useState(new Set())
+  const [activeAccessoryItems, setActiveAccessoryItems] = useState(new Map())
   const { connection } = useConnection()
   const { publicKey, sendTransaction, signMessage } = useWallet()
 
-  const handleMintDesign = useCallback(async ({ name, imageData, strokeData }) => {
+  const handleMintDesign = useCallback(async ({ name, imageData, strokeData, accessoryData }) => {
+    const normalizedAccessories = Array.isArray(accessoryData)
+      ? accessoryData
+      : Array.from(activeAccessoryItems.values())
+
     const uploaded = await uploadDesignMetadataWithWalletAuth({
       publicKey,
       signMessage,
       name,
       imageData,
       strokeData,
+      accessoryData: normalizedAccessories,
     })
 
     return mintMaskDesign({
@@ -42,12 +47,16 @@ function Character() {
       publicKey,
       sendTransaction,
     })
-  }, [connection, publicKey, sendTransaction, signMessage])
+  }, [activeAccessoryItems, connection, publicKey, sendTransaction, signMessage])
 
-  const handleUpdateDesign = useCallback(async ({ metadataUri, name, imageData, strokeData }) => {
+  const handleUpdateDesign = useCallback(async ({ metadataUri, name, imageData, strokeData, accessoryData }) => {
     if (!metadataUri) {
       throw new Error('Loaded design is missing metadata URI.')
     }
+
+    const normalizedAccessories = Array.isArray(accessoryData)
+      ? accessoryData
+      : Array.from(activeAccessoryItems.values())
 
     return updateDesignMetadataWithWalletAuth({
       publicKey,
@@ -56,8 +65,9 @@ function Character() {
       name,
       imageData,
       strokeData,
+      accessoryData: normalizedAccessories,
     })
-  }, [publicKey, signMessage])
+  }, [activeAccessoryItems, publicKey, signMessage])
 
   const handleDeleteDesign = useCallback(async ({ mintAddress, metadataUri }) => {
     if (!mintAddress) {
@@ -153,10 +163,13 @@ function Character() {
   }, [publicKey, signMessage])
 
   const handleAccessoryToggle = useCallback((itemId, isEquipped, itemData = null) => {
-    setActiveAccessories((prev) => {
-      const next = new Set(prev)
-      if (isEquipped) {
-        next.add(itemId)
+    setActiveAccessoryItems((prev) => {
+      const next = new Map(prev)
+      if (isEquipped && itemData) {
+        next.set(itemId, {
+          ...itemData,
+          id: itemId,
+        })
       } else {
         next.delete(itemId)
       }
@@ -170,7 +183,11 @@ function Character() {
   }, [])
 
   useEffect(() => {
-    if (!activeDesign) {
+    const accessories = Array.from(activeAccessoryItems.values())
+    const hasDesign = Boolean(activeDesign)
+    const hasAccessories = accessories.length > 0
+
+    if (!hasDesign && !hasAccessories) {
       if (hasPersistedEquipRef.current) {
         window.localStorage.removeItem('masquerade:equipped-mask')
       }
@@ -178,15 +195,18 @@ function Character() {
     }
 
     const payload = {
-      id: activeDesign.id,
-      name: activeDesign.name,
-      mintAddress: activeDesign.mintAddress,
-      imageData: activeDesign.paintData || activeDesign.imageData || '',
+      id: activeDesign?.id || '',
+      name: activeDesign?.name || 'Accessory Loadout',
+      mintAddress: activeDesign?.mintAddress || '',
+      imageData: activeDesign?.paintData || activeDesign?.imageData || '',
+      paintData: activeDesign?.paintData || activeDesign?.imageData || '',
+      strokeData: Array.isArray(activeDesign?.strokeData) ? activeDesign.strokeData : [],
+      accessories,
     }
 
     window.localStorage.setItem('masquerade:equipped-mask', JSON.stringify(payload))
     hasPersistedEquipRef.current = true
-  }, [activeDesign])
+  }, [activeAccessoryItems, activeDesign])
 
   return (
     <div className="min-h-screen bg-[#0a0a0a] pt-28 pb-8">

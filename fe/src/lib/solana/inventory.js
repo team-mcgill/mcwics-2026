@@ -108,6 +108,54 @@ function resolveStrokeData(metadataJson) {
     .filter(Boolean)
 }
 
+function normalizeVec3(input, fallback) {
+  if (!input || typeof input !== 'object') {
+    return { ...fallback }
+  }
+
+  const x = Number(input.x)
+  const y = Number(input.y)
+  const z = Number(input.z)
+
+  return {
+    x: Number.isFinite(x) ? x : fallback.x,
+    y: Number.isFinite(y) ? y : fallback.y,
+    z: Number.isFinite(z) ? z : fallback.z,
+  }
+}
+
+function resolveAccessories(metadataJson) {
+  const candidate = metadataJson?.properties?.accessories
+  if (!Array.isArray(candidate)) return []
+
+  return candidate
+    .map((item) => {
+      if (!item || typeof item !== 'object') return null
+
+      const id = typeof item.id === 'string' ? item.id.trim() : ''
+      const modelUrl = typeof item.modelUrl === 'string' ? item.modelUrl.trim() : ''
+      if (!id || !modelUrl) return null
+
+      return {
+        id,
+        name: typeof item.name === 'string' ? item.name : id,
+        category: typeof item.category === 'string' ? item.category : 'Accessories',
+        modelUrl,
+        thumbnailUrl: typeof item.thumbnailUrl === 'string' ? item.thumbnailUrl : '',
+        defaultPosition: normalizeVec3(item.defaultPosition, { x: 0, y: 0, z: 0 }),
+        defaultScale: normalizeVec3(item.defaultScale, { x: 1, y: 1, z: 1 }),
+        defaultRotation: normalizeVec3(item.defaultRotation, { x: 0, y: 0, z: 0 }),
+        characterDefaultPosition: normalizeVec3(item.characterDefaultPosition, { x: 0, y: 0, z: 0 }),
+        characterDefaultScale: normalizeVec3(item.characterDefaultScale, { x: 1, y: 1, z: 1 }),
+        characterDefaultRotation: normalizeVec3(item.characterDefaultRotation, { x: 0, y: 0, z: 0 }),
+        roomDefaultPosition: normalizeVec3(item.roomDefaultPosition, { x: 0, y: 0, z: 0 }),
+        roomDefaultScale: normalizeVec3(item.roomDefaultScale, { x: 1, y: 1, z: 1 }),
+        roomDefaultRotation: normalizeVec3(item.roomDefaultRotation, { x: 0, y: 0, z: 0 }),
+      }
+    })
+    .filter(Boolean)
+}
+
 export async function fetchWalletDesignInventory(connection, ownerPublicKey) {
   if (!ownerPublicKey) return []
 
@@ -167,6 +215,7 @@ export async function fetchWalletDesignInventory(connection, ownerPublicKey) {
       imageData: resolveImage(item.metadataJson),
       paintData: resolveMaskTexture(item.metadataJson),
       strokeData: resolveStrokeData(item.metadataJson),
+      accessories: resolveAccessories(item.metadataJson),
       createdAt: item.metadataJson?.createdAt ?? null,
       minted: true,
       metadataUri: item.metadata?.uri ?? null,

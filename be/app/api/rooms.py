@@ -12,6 +12,7 @@ router = APIRouter(tags=["rooms"])
 MAX_NAME_LENGTH = 48
 MAX_CHAT_LENGTH = 240
 MAX_COSMETIC_IMAGE_DATA_LENGTH = 3_000_000
+MAX_COSMETIC_ACCESSORIES = 8
 MAX_COORDINATE_ABS = 200.0
 MAX_ROTATION_ABS = 1000.0
 
@@ -76,6 +77,149 @@ def _parse_cosmetic_image_data(value: object) -> tuple[bool, str | None, str, st
         return True, cleaned, "http_url", ""
 
     return False, None, "unsupported_format", "Use data:image or http(s) image URL."
+
+
+def _sanitize_model_url(value: object) -> str:
+    if not isinstance(value, str):
+        return ""
+
+    cleaned = value.strip()
+    if not cleaned.startswith("/models/"):
+        return ""
+
+    return cleaned[:220]
+
+
+def _normalize_vec3(
+    value: object,
+    *,
+    default_x: float,
+    default_y: float,
+    default_z: float,
+    min_value: float,
+    max_value: float,
+) -> dict[str, float]:
+    if not isinstance(value, dict):
+        return {
+            "x": default_x,
+            "y": default_y,
+            "z": default_z,
+        }
+
+    return {
+        "x": _clamp(_to_float(value.get("x"), default_x), min_value, max_value),
+        "y": _clamp(_to_float(value.get("y"), default_y), min_value, max_value),
+        "z": _clamp(_to_float(value.get("z"), default_z), min_value, max_value),
+    }
+
+
+def _parse_cosmetic_accessories(value: object) -> list[dict[str, object]]:
+    if not isinstance(value, list):
+        return []
+
+    sanitized: list[dict[str, object]] = []
+
+    for raw in value[:MAX_COSMETIC_ACCESSORIES]:
+        if not isinstance(raw, dict):
+            continue
+
+        item_id = raw.get("id")
+        model_url = _sanitize_model_url(raw.get("modelUrl"))
+
+        if not isinstance(item_id, str) or not item_id.strip() or not model_url:
+            continue
+
+        entry: dict[str, object] = {
+            "id": item_id.strip()[:80],
+            "modelUrl": model_url,
+            "defaultPosition": _normalize_vec3(
+                raw.get("defaultPosition"),
+                default_x=0.0,
+                default_y=0.0,
+                default_z=0.0,
+                min_value=-1200.0,
+                max_value=1200.0,
+            ),
+            "defaultScale": _normalize_vec3(
+                raw.get("defaultScale"),
+                default_x=1.0,
+                default_y=1.0,
+                default_z=1.0,
+                min_value=0.05,
+                max_value=20.0,
+            ),
+            "defaultRotation": _normalize_vec3(
+                raw.get("defaultRotation"),
+                default_x=0.0,
+                default_y=0.0,
+                default_z=0.0,
+                min_value=-6.5,
+                max_value=6.5,
+            ),
+            "characterDefaultPosition": _normalize_vec3(
+                raw.get("characterDefaultPosition"),
+                default_x=0.0,
+                default_y=0.0,
+                default_z=0.0,
+                min_value=-1200.0,
+                max_value=1200.0,
+            ),
+            "characterDefaultScale": _normalize_vec3(
+                raw.get("characterDefaultScale"),
+                default_x=1.0,
+                default_y=1.0,
+                default_z=1.0,
+                min_value=0.05,
+                max_value=20.0,
+            ),
+            "characterDefaultRotation": _normalize_vec3(
+                raw.get("characterDefaultRotation"),
+                default_x=0.0,
+                default_y=0.0,
+                default_z=0.0,
+                min_value=-6.5,
+                max_value=6.5,
+            ),
+            "roomDefaultPosition": _normalize_vec3(
+                raw.get("roomDefaultPosition"),
+                default_x=0.0,
+                default_y=0.0,
+                default_z=0.0,
+                min_value=-4.0,
+                max_value=4.0,
+            ),
+            "roomDefaultScale": _normalize_vec3(
+                raw.get("roomDefaultScale"),
+                default_x=1.0,
+                default_y=1.0,
+                default_z=1.0,
+                min_value=0.05,
+                max_value=8.0,
+            ),
+            "roomDefaultRotation": _normalize_vec3(
+                raw.get("roomDefaultRotation"),
+                default_x=0.0,
+                default_y=0.0,
+                default_z=0.0,
+                min_value=-6.5,
+                max_value=6.5,
+            ),
+        }
+
+        name = raw.get("name")
+        category = raw.get("category")
+        thumbnail_url = raw.get("thumbnailUrl")
+
+        if isinstance(name, str) and name.strip():
+            entry["name"] = name.strip()[:120]
+        if isinstance(category, str) and category.strip():
+            entry["category"] = category.strip()[:60]
+        if isinstance(thumbnail_url, str) and thumbnail_url.strip():
+            entry["thumbnailUrl"] = thumbnail_url.strip()[:400]
+
+        sanitized.append(entry)
+
+    return sanitized
 
 
 def _parse_position(value: object) -> dict[str, float]:
@@ -146,6 +290,7 @@ async def room_socket(websocket: WebSocket, room_id: str) -> None:
                     position=_parse_position(message.get("position")),
                     rotation_y=_parse_rotation(message.get("rotationY")),
                     cosmetic_image_data=_sanitize_cosmetic_image_data(message.get("cosmeticImageData")),
+                    cosmetic_accessories=_parse_cosmetic_accessories(message.get("cosmeticAccessories")),
                 )
 
                 snapshot, recipients = await room_state_manager.add_participant(participant)
@@ -193,6 +338,7 @@ async def room_socket(websocket: WebSocket, room_id: str) -> None:
                 accepted, cosmetic_image_data, cosmetic_kind, reason = _parse_cosmetic_image_data(
                     message.get("cosmeticImageData")
                 )
+                cosmetic_accessories = _parse_cosmetic_accessories(message.get("cosmeticAccessories"))
                 if not accepted:
                     await _send_json_safe(
                         websocket,
@@ -209,6 +355,7 @@ async def room_socket(websocket: WebSocket, room_id: str) -> None:
                     room_id=normalized_room_id,
                     player_id=player_id,
                     cosmetic_image_data=cosmetic_image_data,
+                    cosmetic_accessories=cosmetic_accessories,
                 )
 
                 if updated is None:
@@ -231,6 +378,7 @@ async def room_socket(websocket: WebSocket, room_id: str) -> None:
                         "reason": "",
                         "kind": cosmetic_kind,
                         "length": len(cosmetic_image_data or ""),
+                        "accessoriesCount": len(cosmetic_accessories),
                     },
                 )
 
@@ -240,6 +388,7 @@ async def room_socket(websocket: WebSocket, room_id: str) -> None:
                         "type": "player_cosmetic_updated",
                         "playerId": player_id,
                         "cosmeticImageData": updated.cosmetic_image_data,
+                        "cosmeticAccessories": updated.cosmetic_accessories,
                     },
                 )
                 continue

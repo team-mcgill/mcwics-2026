@@ -18,6 +18,7 @@ class UploadDesignRequest(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     imageData: str = Field(min_length=20)
     strokeData: list[dict[str, Any]] | None = None
+    accessoryData: list[dict[str, Any]] | None = None
 
 
 class UpdateDesignRequest(BaseModel):
@@ -25,6 +26,7 @@ class UpdateDesignRequest(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     imageData: str = Field(min_length=20)
     strokeData: list[dict[str, Any]] | None = None
+    accessoryData: list[dict[str, Any]] | None = None
 
 
 class DeleteDesignRequest(BaseModel):
@@ -61,6 +63,7 @@ async def upload_design(
             name=payload.name.strip(),
             image_data_url=payload.imageData,
             stroke_data=payload.strokeData,
+            accessory_data=payload.accessoryData,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -86,6 +89,7 @@ async def update_design(
             name=payload.name.strip(),
             image_data_url=payload.imageData,
             stroke_data=payload.strokeData,
+            accessory_data=payload.accessoryData,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

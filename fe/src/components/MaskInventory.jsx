@@ -58,7 +58,7 @@ export function MaskInventory({
   const [adminItems, setAdminItems] = useState([]);
   const [isLoadingAdminItems, setIsLoadingAdminItems] = useState(false);
   const [activeTab, setActiveTab] = useState('designs');
-  const [selectedAccessories, setSelectedAccessories] = useState(new Set());
+  const [selectedAccessories, setSelectedAccessories] = useState(new Map());
 
   const { publicKey, signMessage } = useWallet();
   const { connection } = useConnection();
@@ -225,7 +225,7 @@ export function MaskInventory({
       setIsSyncingInventory(false);
       setMarketListingsByMint({});
       setAdminItems([]);
-      setSelectedAccessories(new Set());
+      setSelectedAccessories(new Map());
       return;
     }
 
@@ -361,6 +361,7 @@ export function MaskInventory({
             name: trimmedName,
             imageData: exported.imageData,
             strokeData: exported.strokeData,
+            accessoryData: Array.from(selectedAccessories.values()),
           });
         } else {
           if (typeof onMintDesign !== 'function') {
@@ -371,6 +372,7 @@ export function MaskInventory({
             name: trimmedName,
             imageData: exported.imageData,
             strokeData: exported.strokeData,
+            accessoryData: Array.from(selectedAccessories.values()),
           });
         }
 
@@ -426,6 +428,30 @@ export function MaskInventory({
 
     setLoadedDesignId(design.id);
     onDesignLoad?.(design);
+
+    const nextAccessoriesRaw = Array.isArray(design.accessories) ? design.accessories : [];
+    const nextAccessories = nextAccessoriesRaw
+      .filter((item) => item && typeof item.id === 'string' && item.id)
+      .map((item) => ({
+        ...item,
+        id: item.id,
+      }));
+
+    const nextMap = new Map(nextAccessories.map((item) => [item.id, item]));
+    const previousIds = Array.from(selectedAccessories.keys());
+    const nextIds = new Set(nextMap.keys());
+
+    previousIds.forEach((itemId) => {
+      if (!nextIds.has(itemId)) {
+        onAccessoryToggle?.(itemId, false, null);
+      }
+    });
+
+    nextAccessories.forEach((item) => {
+      onAccessoryToggle?.(item.id, true, item);
+    });
+
+    setSelectedAccessories(nextMap);
   };
 
   const handleDeleteClick = (design) => {
@@ -679,9 +705,14 @@ export function MaskInventory({
 
   const handleAccessoryToggle = useCallback((itemId, isEquipped, itemData = null) => {
     setSelectedAccessories((prev) => {
-      const next = new Set(prev);
+      const next = new Map(prev);
       if (isEquipped) {
-        next.add(itemId);
+        if (itemData) {
+          next.set(itemId, {
+            ...itemData,
+            id: itemId,
+          });
+        }
       } else {
         next.delete(itemId);
       }

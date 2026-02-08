@@ -16,6 +16,7 @@ class RoomParticipant:
     position: dict[str, float] = field(default_factory=lambda: {"x": 0.0, "y": 0.0, "z": 0.0})
     rotation_y: float = 0.0
     cosmetic_image_data: str | None = None
+    cosmetic_accessories: list[dict[str, object]] = field(default_factory=list)
 
     def serialize(self) -> dict[str, object]:
         return {
@@ -29,6 +30,7 @@ class RoomParticipant:
             },
             "rotationY": float(self.rotation_y),
             "cosmeticImageData": self.cosmetic_image_data,
+            "cosmeticAccessories": self.cosmetic_accessories,
         }
 
 
@@ -105,6 +107,7 @@ class RoomStateManager:
         room_id: str,
         player_id: str,
         cosmetic_image_data: str | None,
+        cosmetic_accessories: list[dict[str, object]],
     ) -> tuple[RoomParticipant | None, list[WebSocket]]:
         async with self._lock:
             room = self._rooms.get(room_id)
@@ -116,6 +119,7 @@ class RoomStateManager:
                 return None, []
 
             participant.cosmetic_image_data = cosmetic_image_data
+            participant.cosmetic_accessories = cosmetic_accessories
             recipients = [entry.websocket for entry in room.values()]
 
         return participant, recipients
