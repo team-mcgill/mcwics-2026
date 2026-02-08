@@ -6,6 +6,7 @@ from pathlib import Path
 from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from app.config import get_settings
 from app.services.auth import get_wallet_for_token
 from app.services.design_storage import delete_design_assets, persist_design_assets, update_design_assets
 
@@ -45,6 +46,21 @@ def _require_wallet_from_bearer(authorization: str | None) -> str:
     return wallet
 
 
+def _resolve_base_url(request: Request) -> str:
+    settings = get_settings()
+    configured = settings.public_base_url.strip().rstrip("/")
+    if configured:
+        return configured
+
+    forwarded_proto = request.headers.get("x-forwarded-proto", "").split(",", 1)[0].strip().lower()
+    forwarded_host = request.headers.get("x-forwarded-host", "").split(",", 1)[0].strip()
+
+    if forwarded_proto in {"http", "https"} and forwarded_host:
+        return f"{forwarded_proto}://{forwarded_host}"
+
+    return str(request.base_url).rstrip("/")
+
+
 @router.post("/api/designs/upload")
 async def upload_design(
     payload: UploadDesignRequest,
@@ -53,7 +69,7 @@ async def upload_design(
 ) -> dict[str, str]:
     wallet = _require_wallet_from_bearer(authorization)
 
-    base_url = str(request.base_url).rstrip("/")
+    base_url = _resolve_base_url(request)
 
     try:
         stored = persist_design_assets(
@@ -78,7 +94,7 @@ async def update_design(
     authorization: str | None = Header(default=None),
 ) -> dict[str, str]:
     wallet = _require_wallet_from_bearer(authorization)
-    base_url = str(request.base_url).rstrip("/")
+    base_url = _resolve_base_url(request)
 
     try:
         stored = update_design_assets(
@@ -104,7 +120,7 @@ async def delete_design(
     authorization: str | None = Header(default=None),
 ) -> dict[str, Any]:
     wallet = _require_wallet_from_bearer(authorization)
-    base_url = str(request.base_url).rstrip("/")
+    base_url = _resolve_base_url(request)
 
     try:
         deleted = delete_design_assets(

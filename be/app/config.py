@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     api_prefix: str = "/api"
     frontend_origin: str = "http://localhost:5173"
     frontend_origins: str = ""
+    public_base_url: str = ""
     solana_cluster: str = "devnet"
     solana_rpc_url: str = "https://api.devnet.solana.com"
     marketplace_authority_secret: str = ""
