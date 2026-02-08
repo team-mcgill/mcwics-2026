@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useConnection, useWallet } from '@solana/wallet-adapter-react'
 import { FaceMeshPainter } from '../components/FaceMeshPainter'
 import { MaskInventory } from '../components/MaskInventory'
@@ -24,19 +24,6 @@ function Character() {
   const [activeAccessoryItems, setActiveAccessoryItems] = useState(new Map())
   const { connection } = useConnection()
   const { publicKey, sendTransaction, signMessage } = useWallet()
-
-  const accessoryDebugRows = useMemo(
-    () => Array.from(activeAccessoryItems.values()).map((item) => {
-      const rawY = Number(item?.characterDefaultPosition?.y)
-      return {
-        id: item?.id || 'unknown',
-        name: item?.name || item?.id || 'Unknown',
-        source: item?.__transformSource || 'unknown',
-        y: Number.isFinite(rawY) ? rawY : 'n/a',
-      }
-    }),
-    [activeAccessoryItems]
-  )
 
   const handleMintDesign = useCallback(async ({ name, imageData, strokeData, accessoryData }) => {
     const normalizedAccessories = Array.isArray(accessoryData)
@@ -232,16 +219,6 @@ function Character() {
           <p className="text-sm font-light text-[#718096] max-w-xl tracking-wide">
             Customize your masquerade identity. Paint directly on your face mesh, then save your designs to your collection.
           </p>
-          {accessoryDebugRows.length ? (
-            <div className="mt-3 rounded-lg border border-[#2a2a2a] bg-[#0d0d0d] px-3 py-2">
-              <p className="text-[10px] uppercase tracking-wider text-[#8b7355] mb-1">Accessory transform debug</p>
-              {accessoryDebugRows.map((row) => (
-                <p key={row.id} className="text-[11px] text-[#9aa1ad]">
-                  {row.name}: source={row.source}, characterY={row.y}
-                </p>
-              ))}
-            </div>
-          ) : null}
         </div>
 
         {/* Two Column Layout */}

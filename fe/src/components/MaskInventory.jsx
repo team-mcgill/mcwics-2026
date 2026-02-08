@@ -3,6 +3,7 @@ import { useWallet, useConnection } from '@solana/wallet-adapter-react';
 import { fetchWalletDesignInventory, FALLBACK_IMAGE } from '../lib/solana/inventory';
 import { fetchMarketplaceListings } from '../lib/api/marketplace';
 import { fetchUserAdminInventory } from '../lib/api/adminItems';
+import { ModelPreview } from './ModelPreview';
 
 const INVENTORY_CACHE_PREFIX = 'mask-inventory:';
 const JOB_PRUNE_DELAY_MS = 5000;
@@ -930,6 +931,7 @@ export function MaskInventory({
               {adminItems.map((inventoryItem) => {
                 const item = inventoryItem.item;
                 const isSelected = selectedAccessories.has(item.id);
+                const hasModel = typeof item.modelUrl === 'string' && item.modelUrl.trim();
                 return (
                   <div
                     key={item.id}
@@ -939,14 +941,21 @@ export function MaskInventory({
                     onClick={() => handleAccessoryToggle(item.id, !isSelected, item)}
                   >
                     <div className="aspect-square relative overflow-hidden bg-[#1a1a1a]">
-                      <img
-                        src={item.thumbnailUrl || FALLBACK_IMAGE}
-                        alt={item.name}
-                        onError={(event) => {
-                          event.currentTarget.src = FALLBACK_IMAGE;
-                        }}
-                        className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity"
-                      />
+                      {hasModel ? (
+                        <ModelPreview
+                          modelUrl={item.modelUrl}
+                          className="w-full h-full"
+                        />
+                      ) : (
+                        <img
+                          src={item.thumbnailUrl || FALLBACK_IMAGE}
+                          alt={item.name}
+                          onError={(event) => {
+                            event.currentTarget.src = FALLBACK_IMAGE;
+                          }}
+                          className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity"
+                        />
+                      )}
                       {isSelected ? (
                         <div className="absolute top-2 right-2 w-5 h-5 rounded-full bg-emerald-500 flex items-center justify-center">
                           <svg className="w-3 h-3 text-black" fill="currentColor" viewBox="0 0 20 20">

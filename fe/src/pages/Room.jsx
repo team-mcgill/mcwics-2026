@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useParams, useNavigate } from 'react-router-dom'
 import { useConnection, useWallet } from '@solana/wallet-adapter-react'
+import { ModelPreview } from '../components/ModelPreview'
 import { RoomScene } from '../components/room/RoomScene'
 import { createRoomSocket } from '../lib/api/roomsSocket'
 import { fetchUserAdminInventory } from '../lib/api/adminItems'
@@ -1075,6 +1076,7 @@ function Room() {
                     <div className="max-h-[56vh] overflow-y-auto grid grid-cols-2 md:grid-cols-3 gap-3">
                       {availableAccessories.map((accessory) => {
                         const isSelected = draftAccessories.some((item) => item.id === accessory.id)
+                        const hasModel = typeof accessory.modelUrl === 'string' && accessory.modelUrl.trim()
 
                         return (
                           <button
@@ -1084,14 +1086,21 @@ function Room() {
                             className={`text-left rounded-xl overflow-hidden border transition-colors ${isSelected ? 'border-emerald-400/70' : 'border-white/10 hover:border-emerald-400/30'}`}
                           >
                             <div className="aspect-square bg-[#1a1a1a]">
-                              <img
-                                src={accessory.thumbnailUrl || FALLBACK_IMAGE}
-                                alt={accessory.name || 'Accessory'}
-                                onError={(event) => {
-                                  event.currentTarget.src = FALLBACK_IMAGE
-                                }}
-                                className="w-full h-full object-cover"
-                              />
+                              {hasModel ? (
+                                <ModelPreview
+                                  modelUrl={accessory.modelUrl}
+                                  className="w-full h-full"
+                                />
+                              ) : (
+                                <img
+                                  src={accessory.thumbnailUrl || FALLBACK_IMAGE}
+                                  alt={accessory.name || 'Accessory'}
+                                  onError={(event) => {
+                                    event.currentTarget.src = FALLBACK_IMAGE
+                                  }}
+                                  className="w-full h-full object-cover"
+                                />
+                              )}
                             </div>
                             <div className="px-2.5 py-2">
                               <p className="text-xs text-white truncate">{accessory.name || 'Accessory'}</p>
