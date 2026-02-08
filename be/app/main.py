@@ -10,16 +10,13 @@ from app.api.health import router as health_router
 from app.api.marketplace import router as marketplace_router
 from app.api.rooms import router as rooms_router
 from app.api.solana import router as solana_router
-from app.config import get_settings
 
-settings = get_settings()
-
-app = FastAPI(title=settings.app_name)
+app = FastAPI(title="Masquerade API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[settings.frontend_origin],
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
