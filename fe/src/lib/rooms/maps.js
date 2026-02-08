@@ -21,6 +21,17 @@ export const ROOM_MAPS = [
       { x: 7.8, y: 1.6, z: 2.4, rotationY: Math.PI * 0.9 },
     ],
   },
+  {
+    id: 'picnic-in-the-garden',
+    name: 'Picnic in the Garden',
+    modelUrl: '/models/picnic_in_the_garden.glb',
+    defaultYAxis: 0,
+    spawnPoints: [
+      { x: 4.6, y: 0, z: -4.2, rotationY: Math.PI * 0.35 },
+      { x: -5.4, y: 0, z: 4.9, rotationY: -Math.PI * 0.28 },
+      { x: 0, y: 0.8, z: 8.1, rotationY: Math.PI },
+    ],
+  },
 ]
 
 export const DEFAULT_ROOM_MAP = ROOM_MAPS[0]
